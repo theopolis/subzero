@@ -11,68 +11,64 @@ from uefi_firmware import *
 
 def _brute_search(data):
     volumes = search_firmware_volumes(data)
-    files = {}
+    objects = []
 
     for index in volumes:
-        volume_files = _parse_firmware_volume(data[index-40:], name=index)
-        for key, value in volume_files.iteritems():
-            files[key] = value
-    return files
+        objects += _parse_firmware_volume(data[index-40:], name=index)
+    return objects
     pass
 
-def get_name(_object):
-    if len(_object["label"]) > 0: return _object["label"]
-    if "objects" not in _object: return None
-    #print {key:value for key,value in _object.iteritems() if key != "objects"}
+def _parse_firmware_volume(data, name="volume"):
+    firmware_volume = FirmwareVolume(data, name)
+    firmware_volume.process()
+
+    objects = firmware_volume.iterate_objects(True)
+    return objects
+
+def get_file_name(_object):
+    if len(_object["label"]) > 0:
+        return _object["label"]
+    if not "objects" in _object:
+        return None
     for _sub_object in _object["objects"]:
-        #print {key:value for key,value in _sub_object.iteritems() if key != "objects"}
-        if len(_sub_object["label"]) > 0: return _sub_object["label"]
-    for _sub_object in _object["objects"]:
-        _name =  get_name(_sub_object)
-        if _name is not None: return _name
+        if not isinstance(_sub_object["_self"], EfiSection):
+            continue
+        name = get_file_name(_sub_object)
+        if name is not None:
+            return name
     return None
 
-def show_file(_object):
-    return {key:value for key,value in _object.iteritems() if key not in ["objects", "content"]}
-
-def show_files(objects):
-    for _object in objects:
-        if _object["type"] == "FirmwareFile":
-            print _object["guid"], get_name(_object), _object["attrs"]
-        else:
-            print _object["type"], {key:value for key,value in _object.iteritems() if key != "objects"}
-        if "objects" in _object:
-            show_files(_object["objects"])
+def get_file_description(_object):
+    if isinstance(_object["_self"], FreeformGuidSection):
+        return _object["label"]
+    if "objects" not in _object:
+        return None
+    for _sub_object in _object["objects"]:
+        if not isinstance(_sub_object["_self"], EfiSection):
+            continue
+        description = get_file_description(_sub_object)
+        if description is not None:
+            return description
+    return None 
 
 def get_files(objects):
     files = {}
     for _object in objects:
         if _object["type"] == "FirmwareFile":
-            files[_object["guid"]] = {"name": get_name(_object)}
-            for key, value in _object["attrs"].iteritems():
-                files[_object["guid"]][key] = value
-            # Deep copy the object incase there's nested files, no recursive pointers.
-            files[_object["guid"]]["objects"] = copy.deepcopy(_object["objects"])
-            files[_object["guid"]]["content"] = _object["content"]
-            files[_object["guid"]]["guid"] = _object["guid"]
-            files[_object["guid"]]["md5"] = hashlib.md5(_object["content"]).hexdigest()
+            files[_object["guid"]] = {
+                "name": get_file_name(_object), 
+                "description": get_file_description(_object),
+                "attrs": _object["attrs"],
+                "objects": _object["objects"],
+                "content": _object["content"],
+                "guid": _object["guid"]
+            }
         if "objects" in _object:
             for key, value in get_files(_object["objects"]).iteritems():
                 files[key] = value
     return files
 
-def _guid_strings(_object):
-    guids = []
-    if "type" in _object and _object["type"] == 0x18:
-        guids += list(_strings(_object["content"], min=3))
-    if "attrs" in _object and "type" in _object["attrs"] and _object["attrs"]["type"] == 0x18:
-        guids += list(_strings(_object, min=3, no_guid= True))
-    if "objects" in _object:
-        for _sub_object in _object["objects"]:
-            guids += _guid_strings(_sub_object)
-    return guids
-
-def _strings(_object, min=10, no_guid= False):
+def _strings(_object, min=10):
     import string
     result = ""
     for c in _object["content"]:
@@ -83,9 +79,6 @@ def _strings(_object, min=10, no_guid= False):
         if len(result.strip()) >= min:
             yield result
         result = ""
-    if no_guid is False:
-        for _string in _guid_strings(_object):
-            yield _string
 
 def _find_pe(_object):
     if "objects" in _object:
@@ -100,85 +93,87 @@ def _find_pe(_object):
         return _object
     return None
 
-def _load_pe(files):
+def _load_pe(_object):
     _types = {267: "x86", 523: "x86_64"}
-    for key in files:
-        pe_object = _find_pe(files[key])
-        if pe_object is None: continue
 
-        files[key]["sections"] = {}
-        pe = pefile.PE(data= pe_object["content"])
-        files[key]["machine_type"] = pe.FILE_HEADER.Machine
-        files[key]["compile_time"] = pe.FILE_HEADER.TimeDateStamp
-        files[key]["subsystem"] = pe.OPTIONAL_HEADER.Subsystem
+    pe_object = _find_pe(_object)
+    if pe_object is None: 
+        return None
 
-        for section in pe.sections:
-            #pe_1_sections[section.Name.replace("\x00", "")] = section
-            files[key]["sections"][section.Name.replace("\x00", "")] = base64.b64encode(section.get_data(0))
-            files[key]["sections"][section.Name.replace("\x00", "") + "_md5"] = hashlib.md5(section.get_data(0)).hexdigest()
+    pe_info = {}
 
-def _load_strings(files):
-    for key in files:
-        files[key]["strings"] = list(_strings(files[key]))
+    pe_info["sections"] = {}
+    pe = pefile.PE(data= pe_object["content"])
 
+    pe_info["machine_type"] = pe.FILE_HEADER.Machine
+    pe_info["compile_time"] = pe.FILE_HEADER.TimeDateStamp
+    pe_info["subsystem"] = pe.OPTIONAL_HEADER.Subsystem
 
+    for section in pe.sections:
+        #pe_1_sections[section.Name.replace("\x00", "")] = section
+        pe_info["sections"][section.Name.replace("\x00", "")] = base64.b64encode(section.get_data(0))
+        pe_info["sections"][section.Name.replace("\x00", "") + "_md5"] = hashlib.md5(section.get_data(0)).hexdigest()
 
+def _object_entry(_object):
+    return {key: value for key, value in _object.iteritems() if key in ["guid", "type", "attrs"]}
 
-def _encode(files):
-    def _encode_object(_object):
-        if "content" in _object.keys():
-            if _object["content"] is None: _object["content"] = ""
-            else: _object["content"] = base64.b64encode(_object["content"])
-        if "objects" in _object.keys() and len(_object["objects"]) > 0:
-            for _sub_object in _object["objects"]:
-                _encode_object(_sub_object)
-    for key in files.keys():
-        _encode_object(files[key])
+def store_object(_object):
+    if not isinstance(_object["_self"], EfiSection):
+        return None
 
-def _parse_firmware_volume(data, name="volume"):
-    firmware_volume = FirmwareVolume(data, name)
-    firmware_volume.process()
+    '''Store base objects only.'''
+    if "objects" not in _object or len(_object["objects"]) == 0:
+        entry = _object_entry(_object)
+        entry["firmware_id"] = firmware_id
+        entry["content"] = base64.b64encode(_object["content"])
+    
+        result = db.table("objects").insert(entry).run()
+        key = result["generated_keys"][0]
 
-    objects = firmware_volume.iterate_objects(True)
-    return get_files(objects)
+        return [key]
 
+    children = []
+    for _sub_object in _object["objects"]:
+        key = store_object(_sub_object)
+        if key is not None:
+            children += key
+    return children
+
+def store_file(file):
+    children = []
+    for _object in file["objects"]:
+        children += store_object(_object)
+    #print children
+
+    entry = _object_entry(file)
+    entry["children"] = children
+    entry["firmware_id"] = firmware_id
+    entry["content"] = base64.b64encode(file["content"])
+    entry["name"] = file["name"]
+    entry["description"] = file["description"]
+
+    db.table("files").insert(entry).run()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    #parser.add_argument("--save-pe", help='Save a PE by canonical name')
-    #parser.add_argument("--save-content", help= "Save entire content")
-    #parser.add_argument("--date", required=True, help="date the firmware was released")
-    #parser.add_argument("--version", required=True, help="Version")
-    #parser.add_argument("--system", required=True, help="the system")
-    #parser.add_argument("--manuc", required=True, help="the manufacturer")
     parser.add_argument("file", help="The file to work on")
-    #parser.add_argument("file2", help="File to compare")
+
     args = parser.parse_args()
 
-
-
     try:
-        with open(args.file, 'rb') as fh: input_data_1 = fh.read()
+        with open(args.file, 'rb') as fh: input_data = fh.read()
     except Exception, e:
         print "Error: Cannot read file (%s) (%s)." % (args.file, str(e))
         sys.exit(1)
 
-    file_id = hashlib.md5(input_data_1).hexdigest()
-
-    files_1 = _brute_search(input_data_1)
-    _load_pe(files_1)
-    _load_strings(files_1)
-    _encode(files_1)
-    #files_2 = _brute_search(input_data_2)
-
+    firmware_id = hashlib.md5(input_data).hexdigest()
+    objects = _brute_search(input_data)
+    
     r.connect("localhost", 28015).repl()
-    for key in files_1:
-        files_1[key]["firmware_id"] = file_id
-        #print files_1[key]
-        #sys.exit(1)
-        try:
-            r.db("firmware").table("uefi_files").insert(files_1[key]).run()
-        except Exception, e:
-            print str(e), key
-        #sys.exit(1)
+    db = r.db("uefi")
+
+    files = get_files(objects)
+    for key in files:
+        store_file(files[key])
+
 
