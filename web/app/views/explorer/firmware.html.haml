@@ -1,0 +1,32 @@
+- content_for :title do
+  Explorer - Firmware
+
+.none
+  Firmware ID: 
+  = params[:id]
+
+%div
+  %table.table.table-bordered.table-striped.table-hover
+    %thead
+      %tr
+        %th GUID
+        %th Objects
+        %th Size
+        %th Name
+        %th Actions
+    %tbody
+      - @files.each do |file|
+        %tr
+          %td 
+            .none #{file["guid"]}
+            %small (#{file["attrs"]["type_name"]})
+          %td 
+
+            - file["objects"].each do |obj|
+              %div #{obj["attrs"]["type_name"]} #{obj["attrs"]["size"]} 
+          %td #{file["attrs"]["size"]} 
+          %td 
+            .none #{file["name"]} 
+            - if file["description"] != nil and file["description"].length > 0
+              %small (#{file["description"]})
+          %td 

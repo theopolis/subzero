@@ -1,0 +1,31 @@
+- content_for :title do
+  Explorer
+- last_update = 0
+
+.none
+  %div Firmware List
+
+%div
+  %table.table.table-bordered.table-striped.table-hover
+    %thead
+      %tr
+        %th ID
+        %th Name
+        %th Date
+        %th Firmware ID
+        %th Actions
+    %tbody
+      - @firmware.each do |firmware_update|
+        %tr
+          %td #{firmware_update["version"]}
+          %td #{firmware_update["name"]}
+          %td 
+            = Time.at(firmware_update["date"])
+            - if last_update != 0
+              %small 
+                = (firmware_update["date"] - last_update)/(60*60)
+                hours
+            - last_update = firmware_update["date"]
+          %td
+            %a{:href => "/explorer/firmware/#{firmware_update["firmware_id"]}"}
+              #{firmware_update["firmware_id"]}
