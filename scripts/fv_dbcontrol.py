@@ -17,7 +17,7 @@ def _dump_data(name, data):
 class Controller(object):
 
     def command_list_fv(self, db, args):
-        ids = db.table("uefi_files").pluck("firmware_id").distinct().run()
+        ids = db.table("files").pluck("firmware_id").distinct().run()
         for _id in ids:
             info = db.table("updates").filter({"firmware_id": _id["firmware_id"]}).pluck("date", "machine", "name", "version").run()
             print "%s:" % _id["firmware_id"],
@@ -26,8 +26,8 @@ class Controller(object):
         pass
 
     def command_list_files(self, db, args):
-        files = db.table("uefi_files").filter({"firmware_id": args.fv_id}).pluck("guid", "name", "size").order_by("size").run()
-        for _file in files: print "%s %s %s" % (_file["guid"], _file["size"], _file["name"])
+        files = db.table("files").filter({"firmware_id": args.fv_id}).pluck("guid", "name", "attrs", "description").order_by(r.row["attrs"]["size"]).run()
+        for _file in files: print "%s %s %s (%s)" % (_file["guid"], _file["attrs"]["size"], _file["name"], _file["description"])
         pass
 
     def command_compare_fv(self, db, args):
@@ -83,17 +83,22 @@ class Controller(object):
             self._dump_pe(_file)
 
     def _dump_objects(self, name, _object):
+        #if "attrs" in _object and "type_name" in _object["attrs"]:
+        #    name = "%s-%s" % (name, _object["attrs"]["type_name"])
+        #    _dump_data("%s.obj" % name, base64.b64decode(_object["content"]))
+        #if "objects" in _object:
+        #    for _obj in _object["objects"]: self._dump_objects(name, _obj)
+        #pass
         if "attrs" in _object and "type_name" in _object["attrs"]:
             name = "%s-%s" % (name, _object["attrs"]["type_name"])
-            _dump_data("%s.obj" % name, base64.b64decode(_object["content"]))
-        if "objects" in _object:
-            for _obj in _object["objects"]: self._dump_objects(name, _obj)
-        pass
+        _dump_data("%s.obj" % name, base64.b64decode(_object["content"]))
+
 
     def command_dump_file(self, db, args):
-        files = db.table("uefi_files").filter({"firmware_id": args.fv_id, "guid": args.guid}).limit(1).run()
-        for _file in files:
-            self._dump_objects(args.guid, _file)
+        files = db.table("files").filter({"firmware_id": args.fv_id, "guid": args.guid}).limit(1).run()
+        children = db.table("objects").filter({"firmware_id": args.fv_id, "guid": args.guid}).run()
+        for _object in children:
+            self._dump_objects(args.guid, _object)
 
     def command_dump_files(self, db, args):
         files = db.table("uefi_files").filter({"guid": args.guid}).run()
@@ -145,12 +150,12 @@ def main():
     parser_list_files = subparsers.add_parser("list_files", help= "List all files GUIDs for a given FV ID")
     parser_list_files.add_argument("fv_id",  help="Firmware ID.")
 
-    parser_dump_pe = subparsers.add_parser("dump_pe", help= "Write PE object if it exists.")
-    parser_dump_pe.add_argument("fv_id", help="Firmware ID.")
-    parser_dump_pe.add_argument("guid", help="File GUID.")
+    #parser_dump_pe = subparsers.add_parser("dump_pe", help= "Write PE object if it exists.")
+    #parser_dump_pe.add_argument("fv_id", help="Firmware ID.")
+    #parser_dump_pe.add_argument("guid", help="File GUID.")
 
-    parser_dump_pes = subparsers.add_parser("dump_pes", help= "Write all PEs from a given firmware ID.")
-    parser_dump_pes.add_argument("fv_id", help="Firmware ID.")
+    #parser_dump_pes = subparsers.add_parser("dump_pes", help= "Write all PEs from a given firmware ID.")
+    #parser_dump_pes.add_argument("fv_id", help="Firmware ID.")
 
     parser_dump_file = subparsers.add_parser("dump_file", help= "Write file objects.")
     parser_dump_file.add_argument("fv_id", help="Firmware ID.")
@@ -177,7 +182,7 @@ def main():
     command = "command_%s" % args.command
 
     r.connect("localhost", 28015).repl()
-    db = r.db("firmware")
+    db = r.db("uefi")
 
     command_ptr = getattr(controller, command, None)
     if command_ptr is not None:

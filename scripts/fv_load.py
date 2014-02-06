@@ -4,6 +4,7 @@ import pefile
 import os
 import base64
 import copy
+import magic
 
 import rethinkdb as r
 
@@ -79,19 +80,6 @@ def _strings(_object, min=10):
         if len(result.strip()) >= min:
             yield result
         result = ""
-
-def _find_pe(_object):
-    if "objects" in _object:
-        for _sub_object in _object["objects"]:
-            if _sub_object["type"] not in ["FirmwareFileSystemSection", "CompressedSection"]:
-                continue
-            sub_content = _find_pe(_sub_object)
-            if sub_content is not None: return sub_content
-    if "attrs" not in _object: return None
-    if "type_name" not in _object["attrs"]: return None
-    if _object["attrs"]["type_name"] in ["PE32 image"]:
-        return _object
-    return None
 
 def _load_pe(_object):
     _types = {267: "x86", 523: "x86_64"}
