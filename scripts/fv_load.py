@@ -4,7 +4,6 @@ import pefile
 import os
 import base64
 import copy
-import magic
 
 import rethinkdb as r
 

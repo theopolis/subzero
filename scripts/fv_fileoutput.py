@@ -85,7 +85,7 @@ def file_compare(key, file1, file2):
     md5_1 = hashlib.md5(file1["content"]).hexdigest()
     md5_2 = hashlib.md5(file2["content"]).hexdigest()
 
-    if md5_1 == md5_2: return False
+    if md5_1 == md5_2: return 0
 
     #if md5_1 != md5_2:
     #    print "%s content is different: %s %s" % (key, md5_1, md5_2)

@@ -1,5 +1,7 @@
 import argparse, json, os, sys, time
 import base64
+import hashlib
+
 import rethinkdb as r
 
 from utils import red
@@ -13,6 +15,31 @@ def _dump_data(name, data):
         print "Wrote: %s" % (red(name))
     except Exception, e:
         print "Error: could not write (%s), (%s)." % (name, str(e))
+
+def _file_compare(db, file1, file2):
+    md5_1 = hashlib.md5(file1["content"]).hexdigest()
+    md5_2 = hashlib.md5(file2["content"]).hexdigest()
+    
+    if md5_1 == md5_2: return 0
+
+    objects1 = db.table("objects").filter({"guid": file1["guid"], "firmware_id": file1["firmware_id"]}).order_by(r.row["attrs"]["size"]).run()
+    objects1 = [obj for obj in objects1]
+    objects2 = db.table("objects").filter({"guid": file2["guid"], "firmware_id": file2["firmware_id"]}).order_by(r.row["attrs"]["size"]).run()
+    objects2 = [obj for obj in objects2]
+
+    change_score = 0
+    for i in xrange(len(objects1)):
+        content1 = base64.b64decode(objects1[i]["content"])
+        content2 = base64.b64decode(objects2[i]["content"])
+        min_size = min(len(content1), len(content2))
+        max_size = max(len(content1), len(content2))
+        change_score += max_size - min_size
+        for i in xrange(min_size):
+            if content1[i] != content2[i]:
+                change_score += 1
+
+    return change_score
+    pass
 
 class Controller(object):
 
@@ -30,26 +57,60 @@ class Controller(object):
         for _file in files: print "%s %s %s (%s)" % (_file["guid"], _file["attrs"]["size"], _file["name"], _file["description"])
         pass
 
-    def command_compare_fv(self, db, args):
-        files1 = db.table("uefi_files").filter({"firmware_id": args.fv_orig}).run()
-        files2 = db.table("uefi_files").filter({"firmware_id": args.fv_new}).run()
+    def _compare_fv(self, db, fv1, fv2, save= False):
+        files1 = db.table("files").filter({"firmware_id": fv1[1]}).run()
+        files2 = db.table("files").filter({"firmware_id": fv2[1]}).run()
 
         files_list1 = {_file["guid"]: _file for _file in files1}
         files_list2 = {_file["guid"]: _file for _file in files2}
 
+        if len(files_list1) == 0 or len(files_list2) == 0:
+            print "Cannot compare versions (%d, %d) without loaded firmware." % (fv1[0], fv2[0])
+            return 
+
+        change_score = 0
+        new_files = []
         for guid, _file in files_list1.iteritems():
             if guid not in files_list2:
-                print "%s (%s) not in %s" % (guid, _file["name"], args.fv_new) #,show_file(value)
+                print "%s (%s) not in %s" % (guid, _file["name"], fv1[1])
+                change_score += files_list1[guid]["attrs"]["size"]
+                pass
         for guid, _file in files_list2.iteritems():
             if guid not in files_list1:
-                print "%s (%s) not in %s" % (guid, _file["name"], args.fv_orig) #,show_file(value)
+                print "%s (%s) not in %s" % (guid, _file["name"], fv2[1])
+                change_score += files_list2[guid]["attrs"]["size"]
+                new_files.append(guid)
 
-        difference_count = 0
+                if save:
+                    db.table("files").filter({"firmware_id": fv2[1], "guid": guid}).update(
+                        {"load_change": {"new_file": True}}
+                    ).run()
+                pass
+
         for guid, _file in files_list1.iteritems():
             if guid not in files_list2: continue
-            if file_compare(guid, _file, files_list2[guid]):
-                difference_count += 1
-        print "%d files, %d different files" % (len(files_list1), difference_count)
+            score = _file_compare(db, _file, files_list2[guid])
+
+            db.table("files").filter({"firmware_id": fv2[1], "guid": guid}).update(
+                {"load_change": {"change_score": score}}
+            ).run()
+
+            change_score += score
+
+        if save:
+            db.table("updates").filter({"firmware_id": fv2[1]}).update(
+                {"load_change": {"change_score": change_score, "new_files": new_files}}
+            ).run()
+        print "Versions (%d, %d) change: %d" % (fv1[0], fv2[0], change_score)
+
+        pass
+
+    def command_load_change(self, db, args):
+        fvs = db.table("updates").filter({"machine": args.machine}).order_by("version").pluck("version", "firmware_id").run()
+        fvs = [(_fv["version"], _fv["firmware_id"]) for _fv in fvs]
+
+        for i in xrange(len(fvs)-1):
+            self._compare_fv(db, fvs[i], fvs[i+1], True)
 
     def _dump_pe(self, _object):
         def _get_pes(_object):
@@ -83,12 +144,6 @@ class Controller(object):
             self._dump_pe(_file)
 
     def _dump_objects(self, name, _object):
-        #if "attrs" in _object and "type_name" in _object["attrs"]:
-        #    name = "%s-%s" % (name, _object["attrs"]["type_name"])
-        #    _dump_data("%s.obj" % name, base64.b64decode(_object["content"]))
-        #if "objects" in _object:
-        #    for _obj in _object["objects"]: self._dump_objects(name, _obj)
-        #pass
         if "attrs" in _object and "type_name" in _object["attrs"]:
             name = "%s-%s" % (name, _object["attrs"]["type_name"])
         _dump_data("%s.obj" % name, base64.b64decode(_object["content"]))
@@ -101,7 +156,7 @@ class Controller(object):
             self._dump_objects(args.guid, _object)
 
     def command_dump_files(self, db, args):
-        files = db.table("uefi_files").filter({"guid": args.guid}).run()
+        files = db.table("files").filter({"guid": args.guid}).run()
         files = {_file["firmware_id"]: _file for _file in files}
 
         if args.machine:
@@ -114,21 +169,12 @@ class Controller(object):
         pass
 
     def command_dump_others(self, db, args):
-        files = db.table("uefi_files").filter({"firmware_id": args.fv_id}).run()
+        files = db.table("files").filter({"firmware_id": args.fv_id}).run()
         for _file in files:
-            if _file["type"] not in [2, 1]: continue
+            if _file["attrs"]["type"] not in [2, 1]: continue
             self._dump_objects(_file["guid"], _file)
         pass
 
-    def command_search_string(self, db, args):
-        if args.fvid:
-            files = db.table("uefi_files").filter({"firmware_id": args.fvid}).pluck("strings", "firmware_id", "guid", "name").run()
-        else:
-            files = db.table("uefi_files").pluck("strings", "firmware_id", "guid", "name").run()
-        for _file in files:
-            for _string in _file["strings"]:
-                if _string.lower().find(args.search.lower()) >= 0:
-                    print "%s-%s (%s) %s" % (_file["firmware_id"], _file["guid"], _file["name"], _string)
 
 def parse_extra (parser, namespace):
     namespaces = []
@@ -168,13 +214,9 @@ def main():
     parser_dump_others = subparsers.add_parser("dump_others", help= "Dump files that are not drivers/PEs")
     parser_dump_others.add_argument("fv_id", help="Firmware ID.")
 
-    parser_search_string = subparsers.add_parser("search_string", help= "Search for a string")
-    parser_search_string.add_argument("--fvid", help="Limit searching to firmware ID.")
-    parser_search_string.add_argument("search", help="String to search")
 
-    parser_compare_fv = subparsers.add_parser("compare_fv", help= "Compare two firmware updates and display stats.")
-    parser_compare_fv.add_argument("fv_orig", help="Original firmware ID")
-    parser_compare_fv.add_argument("fv_new", help="New firmware ID")
+    parser_load_change = subparsers.add_parser("load_change", help= "Load change scores for files and firmware.")
+    parser_load_change.add_argument("machine", help="Machine name to load")
 
     args = argparser.parse_args()
 
