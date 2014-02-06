@@ -22,7 +22,7 @@ class ExplorerController < ApplicationController
 
     objects = {}
     cursor = r.db("uefi").table("objects").filter{|obj| obj["firmware_id"].eq(firmware_id)}.
-      pluck("attrs", "guid").
+      pluck("attrs", "guid", "load_meta").
       order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
     cursor.each do |obj|
       unless objects.has_key? (obj["guid"])

@@ -105,8 +105,9 @@ def _object_entry(_object):
     return {key: value for key, value in _object.iteritems() if key in ["guid", "type", "attrs"]}
 
 def store_object(_object):
-    if not isinstance(_object["_self"], EfiSection):
-        return None
+    if "_self" in _object:
+        if not isinstance(_object["_self"], EfiSection):
+            return None
 
     '''Store base objects only.'''
     if "objects" not in _object or len(_object["objects"]) == 0:
@@ -127,12 +128,18 @@ def store_object(_object):
     return children
 
 def store_file(file):
+    entry = _object_entry(file)
+
     children = []
     for _object in file["objects"]:
         children += store_object(_object)
     #print children
 
-    entry = _object_entry(file)
+    if len(children) == 0:
+        print "Storing a cloned child for (%s)." % file["guid"]
+        entry["no_children"] = True
+        children += store_object(file)
+
     entry["children"] = children
     entry["firmware_id"] = firmware_id
     entry["content"] = base64.b64encode(file["content"])

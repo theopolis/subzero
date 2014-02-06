@@ -1,6 +1,9 @@
 import argparse, json, os, sys, time
 import base64
+
 import hashlib
+import pydeep
+import magic
 
 import rethinkdb as r
 
@@ -112,6 +115,31 @@ class Controller(object):
         for i in xrange(len(fvs)-1):
             self._compare_fv(db, fvs[i], fvs[i+1], True)
 
+    def _load_meta(self, db, _object):
+        content = base64.b64decode(_object["content"])
+        #print _object["firmware_id"]
+        db.table("objects").filter({"id": _object["id"]}).update({
+            "load_meta": {
+                "magic":  magic.from_buffer(content),
+                "ssdeep": pydeep.hash_buf(content),
+                "md5":    hashlib.md5(content).hexdigest(),
+                "sha1":   hashlib.sha1(content).hexdigest(),
+                "sha256": hashlib.sha256(content).hexdigest()
+            }
+        }).run()
+        pass
+
+    def command_load_meta(self, db, args):
+        fvs = db.table("updates").filter({"machine": args.machine}).order_by("version").pluck("version", "firmware_id").run()
+        #fvs = [(_fv["version"], _fv["firmware_id"]) for _fv in fvs]
+
+        for fv in fvs:
+            objects = db.table("objects").filter({"firmware_id": fv["firmware_id"]}).pluck("firmware_id", "id", "content").run()
+            objects = [obj for obj in objects]
+            for obj in objects:
+                self._load_meta(db, obj)
+                #return
+
     def _dump_pe(self, _object):
         def _get_pes(_object):
             pes = []
@@ -214,9 +242,12 @@ def main():
     parser_dump_others = subparsers.add_parser("dump_others", help= "Dump files that are not drivers/PEs")
     parser_dump_others.add_argument("fv_id", help="Firmware ID.")
 
-
+    '''Simple loading/parsing commands.'''
     parser_load_change = subparsers.add_parser("load_change", help= "Load change scores for files and firmware.")
-    parser_load_change.add_argument("machine", help="Machine name to load")
+    parser_load_change.add_argument("machine", help="Machine name to load.")
+
+    parser_load_meta = subparsers.add_parser("load_meta", help= "Extract meta, hashes for a machine's firmware.")
+    parser_load_meta.add_argument("machine", help= "Machien name to load.")
 
     args = argparser.parse_args()
 
