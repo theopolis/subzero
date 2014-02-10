@@ -25,13 +25,58 @@ class ExplorerController < ApplicationController
   	end
   end
 
+  def file
+    @firmware_id = params[:firmware_id]
+    @guid = params[:id]
+
+    ### Get Information about File
+    cursor = r.db("uefi").table("files").filter{|file| 
+        (file["firmware_id"].eq(@firmware_id)) & (file["guid"].eq(@guid))
+      }.pluck("name", "guid", "description", "attrs", "load_change", "size").limit(1).run
+
+    ### Silly construct
+    cursor.each do |file|
+      @file = file
+      break
+    end
+
+    ### Stats will display a table of key=>value details
+    @stats = {
+      "name" => @file["name"],
+      "description" => @file["description"],
+    }
+    @stats = @stats.deep_merge(@file["attrs"])
+
+    ### Collect objects within this file
+    @objects = []
+    cursor = r.db("uefi").table("objects").filter{|obj| 
+        (obj["firmware_id"].eq(@firmware_id)) & (obj["guid"].eq(@guid))
+      }.pluck("attrs", "load_meta").
+      order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
+
+    cursor.each do |obj|
+      obj["stats"] = obj["attrs"]
+      if obj.has_key?("load_meta")
+        obj["stats"] = obj["stats"].merge(obj["load_meta"])
+      end
+
+      @objects.push(obj)
+    end
+
+    ### This applies to objects
+    if @file.has_key?("load_meta")
+      @stats.merge(@file["load_meta"]) {|key, a_val, b_val| a_val.merge b_val }
+    end
+
+  end
+
   def firmware
-    firmware_id = params[:id]
+    @firmware_id = params[:id]
     @files = []
 
     ### Search for objects, later bind them to each file listed.
     objects = {}
-    cursor = r.db("uefi").table("objects").filter{|obj| obj["firmware_id"].eq(firmware_id)}.
+    cursor = r.db("uefi").table("objects").filter{|obj| obj["firmware_id"].eq(@firmware_id)}.
       pluck("attrs", "guid", "load_meta").
       order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
     cursor.each do |obj|
@@ -49,7 +94,7 @@ class ExplorerController < ApplicationController
     end
 
     ### Finally, search for files belonging to this firmware_id
-    cursor = r.db("uefi").table("files").filter{|file| file["firmware_id"].eq(firmware_id)}.
+    cursor = r.db("uefi").table("files").filter{|file| file["firmware_id"].eq(@firmware_id)}.
       pluck("name", "guid", "description", "attrs", "load_change", "size").
       order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
     cursor.each do |file|

@@ -3,7 +3,7 @@
 
 .none
   Firmware ID: 
-  = params[:id]
+  = @firmware_id
 
 %div
   %table.table.table-bordered.table-striped.table-hover
@@ -19,7 +19,9 @@
       - @files.each do |file|
         %tr
           %td 
-            .none #{file["guid"]}
+            %div
+              %a{ :href => "/explorer/file/#{@firmware_id}/#{file["guid"]}"}
+                #{file["guid"]}
             %small (#{file["attrs"]["type_name"]})
           %td 
 

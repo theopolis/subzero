@@ -95,8 +95,8 @@ class Controller(object):
         for guid, _file in files_list1.iteritems():
             if guid not in files_list2: continue
             score = _file_compare(db, _file, files_list2[guid])
-            next if score == 0
-            
+            if score == 0: continue
+
             db.table("files").filter({"firmware_id": fv2[1], "guid": guid}).update(
                 {"load_change": {"change_score": score}
             }).run()

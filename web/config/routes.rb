@@ -4,4 +4,5 @@ RailsBootstrap::Application.routes.draw do
   get 'explorer' => "explorer#explorer"
   get 'explorer/firmware/:id' => "explorer#firmware"
 
+  get 'explorer/file/:firmware_id/:id' => "explorer#file"
 end
