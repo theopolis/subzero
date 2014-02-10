@@ -114,7 +114,7 @@ def store_object(_object):
         entry = _object_entry(_object)
         entry["firmware_id"] = firmware_id
         entry["content"] = base64.b64encode(_object["content"])
-    
+   
         result = db.table("objects").insert(entry).run()
         key = result["generated_keys"][0]
 
@@ -129,6 +129,10 @@ def store_object(_object):
 
 def store_file(file):
     entry = _object_entry(file)
+
+    if not db.table("files").filter({"firmware_id": firmware_id, "guid": file["guid"]}).is_empty().run():
+        '''If the file already exists for this GUID/FirmwareID pair, skip.'''
+        return
 
     children = []
     for _object in file["objects"]:
@@ -147,6 +151,7 @@ def store_file(file):
     entry["description"] = file["description"]
 
     db.table("files").insert(entry).run()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
