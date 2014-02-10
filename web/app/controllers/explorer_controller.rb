@@ -20,6 +20,7 @@ class ExplorerController < ApplicationController
     firmware_id = params[:id]
     @files = []
 
+    ### Search for objects, later bind them to each file listed.
     objects = {}
     cursor = r.db("uefi").table("objects").filter{|obj| obj["firmware_id"].eq(firmware_id)}.
       pluck("attrs", "guid", "load_meta").
@@ -31,20 +32,29 @@ class ExplorerController < ApplicationController
       objects[obj["guid"]].push(obj)
     end
 
+    ### Search for optional lookup values which better describe each file
+    lookups = {}
+    cursor = r.db("uefi").table("lookup").run
+    cursor.each do |lookup|
+      lookups[lookup["guid"]] = lookup
+    end
+
+    ### Finally, search for files belonging to this firmware_id
     cursor = r.db("uefi").table("files").filter{|file| file["firmware_id"].eq(firmware_id)}.
       pluck("name", "guid", "description", "attrs").
       order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
     cursor.each do |file|
-      #p file["guid"]
-      #child_cursor = r.db("uefi").table("objects").filter{|obj| obj["guid"].eq(file["guid"])}.
-      #  pluck("attrs").
-      #  order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
       if objects.has_key? (file["guid"])
         file["objects"] = objects[file["guid"]]
       else
         file["objects"] = []
       end
-      #child_cursor.each{|child| file["objects"].push(child)}
+      if lookups.has_key? (file["guid"])
+        lookups[file["guid"]].each do |key, value|
+          next if key == "guid"
+          file[key] = "*%s" % value
+        end
+      end
       @files.push(file)
     end
 

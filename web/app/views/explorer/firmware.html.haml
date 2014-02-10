@@ -25,7 +25,8 @@
             - file["objects"].each do |obj|
               %div 
                 #{obj["attrs"]["type_name"]} #{obj["attrs"]["size"]} 
-                %small (#{obj["load_meta"]["magic"]})
+                - if obj.has_key? ("load_meta")
+                  %small (#{obj["load_meta"]["magic"]})
           %td #{file["attrs"]["size"]} 
           %td 
             .none #{file["name"]} 

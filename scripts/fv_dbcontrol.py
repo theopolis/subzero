@@ -203,6 +203,23 @@ class Controller(object):
             self._dump_objects(_file["guid"], _file)
         pass
 
+    def command_add_lookup(self, db, args):
+        if db.table("files").filter({"guid": args.guid}).is_empty().run():
+            if args.force is False:
+                print "Cannot find any files matching GUID (%s), please use the force option." % args.guid
+                return
+
+        if db.table("lookup").filter({"guid": args.guid}).is_empty().run():
+            db.table("lookup").insert({
+                "guid": args.guid,
+                "%s" % args.name: args.value
+            }).run()
+            print "Added lookup for GUID (%s), with (%s) = (%s)." % (args.guid, args.name, args.value) 
+        else:
+            db.table("lookup").filter({"guid": args.guid}).update({"%s" % args.name: args.value}).run()
+            print "Updated lookup for GUID (%s), set (%s) = (%s)." % (args.guid, args.name, args.value)
+        pass
+
 
 def parse_extra (parser, namespace):
     namespaces = []
@@ -248,6 +265,12 @@ def main():
 
     parser_load_meta = subparsers.add_parser("load_meta", help= "Extract meta, hashes for a machine's firmware.")
     parser_load_meta.add_argument("machine", help= "Machien name to load.")
+
+    parser_add_lookup = subparsers.add_parser("add_lookup", help= "Add metadata about a file GUID.")
+    parser_add_lookup.add_argument("guid", help= "File GUID")
+    parser_add_lookup.add_argument("name", help="Key to add to the GUID.")
+    parser_add_lookup.add_argument("value", help= "Value")
+    parser_add_lookup.add_argument("-f", "--force", default=False, action= "store_true", help= "Force the lookup insert.")
 
     args = argparser.parse_args()
 
