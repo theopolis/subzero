@@ -171,6 +171,12 @@ if __name__ == "__main__":
     r.connect("localhost", 28015).repl()
     db = r.db("uefi")
 
+    if not db.table("updates").filter({"firmware_id": firmware_id}).is_empty().run():
+        ### Add size of the firmware to the updates table
+        db.table("updates").filter({"firmware_id": firmware_id}).update({
+            "size": len(input_data)
+        }).run()
+
     files = get_files(objects)
     for key in files:
         store_file(files[key])

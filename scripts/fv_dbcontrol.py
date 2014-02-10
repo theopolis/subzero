@@ -73,6 +73,7 @@ class Controller(object):
 
         change_score = 0
         new_files = []
+        new_files_score = 0
         for guid, _file in files_list1.iteritems():
             if guid not in files_list2:
                 print "%s (%s) not in %s" % (guid, _file["name"], fv1[1])
@@ -83,6 +84,7 @@ class Controller(object):
                 print "%s (%s) not in %s" % (guid, _file["name"], fv2[1])
                 change_score += files_list2[guid]["attrs"]["size"]
                 new_files.append(guid)
+                new_files_score += files_list2[guid]["attrs"]["size"]
 
                 if save:
                     db.table("files").filter({"firmware_id": fv2[1], "guid": guid}).update(
@@ -93,17 +95,22 @@ class Controller(object):
         for guid, _file in files_list1.iteritems():
             if guid not in files_list2: continue
             score = _file_compare(db, _file, files_list2[guid])
-
+            next if score == 0
+            
             db.table("files").filter({"firmware_id": fv2[1], "guid": guid}).update(
-                {"load_change": {"change_score": score}}
-            ).run()
+                {"load_change": {"change_score": score}
+            }).run()
 
             change_score += score
 
         if save:
             db.table("updates").filter({"firmware_id": fv2[1]}).update(
-                {"load_change": {"change_score": change_score, "new_files": new_files}}
-            ).run()
+                {"load_change": {
+                    "change_score": change_score, 
+                    "new_files": new_files,
+                    "new_files_score": new_files_score
+                }
+            }).run()
         print "Versions (%d, %d) change: %d" % (fv1[0], fv2[0], change_score)
 
         pass
