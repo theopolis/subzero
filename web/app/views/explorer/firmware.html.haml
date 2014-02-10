@@ -13,6 +13,7 @@
         %th Objects
         %th Size
         %th Name
+        %th Stats
         %th Actions
     %tbody
       - @files.each do |file|
@@ -32,4 +33,9 @@
             .none #{file["name"]} 
             - if file["description"] != nil and file["description"].length > 0
               %small (#{file["description"]})
+          %td 
+            - if file.has_key? ("stats")
+              - file["stats"].each do |key, value|
+                %b= key
+                %small= value
           %td 

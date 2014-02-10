@@ -12,6 +12,7 @@
         %th ID
         %th Name
         %th Date
+        %th Stats
         %th Firmware ID
         %th Actions
     %tbody
@@ -27,5 +28,11 @@
                 hours
             - last_update = firmware_update["date"]
           %td
+            - if firmware_update.has_key? ("stats")
+              - firmware_update["stats"].each do |key, value|
+                %b= key
+                %small= value
+          %td
             %a{:href => "/explorer/firmware/#{firmware_update["firmware_id"]}"}
               #{firmware_update["firmware_id"]}
+          %td None
