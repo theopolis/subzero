@@ -1,4 +1,6 @@
 require 'rethinkdb'
+require "base64"
+
 include RethinkDB::Shortcuts
 
 class ExplorerController < ApplicationController
@@ -6,13 +8,13 @@ class ExplorerController < ApplicationController
 
   # GET /explorer
   def explorer
-  	@firmware = []
+  	@firmware = {}
 
   	updates = r.db("uefi").table("updates").
       order_by(r.asc(lambda {|doc| doc[:version]})).run
   	updates.each do |doc|
       if doc.has_key? ("load_change")
-        p (doc["load_change"]["change_score"]/doc["size"])*100
+        #p (doc["load_change"]["change_score"]/doc["size"])*100
         doc["stats"] = {
           "Changed" => "#{doc["load_change"]["change_score"]} bytes, %.2f%" % [percent_change(doc)]
         }
@@ -21,8 +23,25 @@ class ExplorerController < ApplicationController
         end
       end
 
-  	  @firmware.push(doc)
+      ### Organize firmware updates by machine
+      unless @firmware.has_key?(doc["machine"])
+        @firmware[doc["machine"]] = []
+      end
+
+  	  @firmware[doc["machine"]].push(doc)
   	end
+  end
+
+  def download
+    @object_id = params[:object_id]
+
+    object = r.db("uefi").table("objects").get(@object_id).run
+    if object == nil
+      return
+    end
+
+    send_data Base64.decode64(object["content"]), :filename => "%s-%s.obj" % [object["firmware_id"], object["guid"]]
+
   end
 
   def file
@@ -51,7 +70,7 @@ class ExplorerController < ApplicationController
     @objects = []
     cursor = r.db("uefi").table("objects").filter{|obj| 
         (obj["firmware_id"].eq(@firmware_id)) & (obj["guid"].eq(@guid))
-      }.pluck("attrs", "load_meta").
+      }.pluck("attrs", "load_meta", "id").
       order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
 
     cursor.each do |obj|
@@ -72,6 +91,39 @@ class ExplorerController < ApplicationController
 
   def firmware
     @firmware_id = params[:id]
+    @objects = []
+
+    ### Section firmware type
+    @firmware_type = ""
+    cursor = r.db("uefi").table("updates").filter{|obj| obj["firmware_id"].eq(@firmware_id)}.
+      pluck("type").run
+    cursor.each do |obj|
+      @firmware_type = obj["type"]
+      break
+    end
+
+    cursor = r.db("uefi").table("objects").filter{|obj| obj["firmware_id"].eq(@firmware_id)}.
+      pluck("attrs", "guid", "object_id", "load_meta").
+      order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
+
+    cursor.each do |obj|
+      ### Todo: handle each type of firmware, populate obj["objects"]
+      obj["objects"] = []
+      add_lookups!(obj)
+
+      obj["stats"] = {}
+      objects_count = r.db("uefi").table("objects").count{|_obj| _obj["firmware_id"].eq(obj["object_id"])}.run
+      files_count = r.db("uefi").table("files").count{|_obj| _obj["firmware_id"].eq(obj["object_id"])}.run
+      if objects_count > 0 then obj["stats"]["Objects"] = objects_count end
+      if files_count > 0 then obj["stats"]["UEFI Files"] = files_count end
+
+      @objects.push(obj)
+    end
+
+  end
+
+  def uefi
+    @firmware_id = params[:id]
     @files = []
 
     ### Search for objects, later bind them to each file listed.
@@ -86,13 +138,6 @@ class ExplorerController < ApplicationController
       objects[obj["guid"]].push(obj)
     end
 
-    ### Search for optional lookup values which better describe each file
-    lookups = {}
-    cursor = r.db("uefi").table("lookup").run
-    cursor.each do |lookup|
-      lookups[lookup["guid"]] = lookup
-    end
-
     ### Finally, search for files belonging to this firmware_id
     cursor = r.db("uefi").table("files").filter{|file| file["firmware_id"].eq(@firmware_id)}.
       pluck("name", "guid", "description", "attrs", "load_change", "size").
@@ -104,12 +149,7 @@ class ExplorerController < ApplicationController
         file["objects"] = []
       end
 
-      if lookups.has_key? (file["guid"])
-        lookups[file["guid"]].each do |key, value|
-          next if key == "guid"
-          file[key] = "*%s" % value
-        end
-      end
+      add_lookups!(file)
       
       ### Add an assortment of stats
       if file.has_key? ("load_change")
@@ -137,6 +177,30 @@ private
     size = _obj.has_key?("size") ? _obj["size"] : _obj["attrs"]["size"]
     score = _obj["load_change"]["change_score"]
     return (score/(size * 1.0))*100
+  end
+
+  def lookups
+    if @lookups != nil
+      return @lookups
+    end
+
+    ### Search for optional lookup values which better describe each file
+    @lookups = {}
+    cursor = r.db("uefi").table("lookup").run
+    cursor.each do |lookup|
+      @lookups[lookup["guid"]] = lookup
+    end
+    return @lookups
+  end
+
+  def add_lookups! (_obj)
+    lookups = lookups()
+    if lookups.has_key?(_obj["guid"])
+      lookups[_obj["guid"]].each do |key, value|
+        next if key == "guid"
+        _obj[key] = "*%s" % value
+      end
+    end
   end
 
 end

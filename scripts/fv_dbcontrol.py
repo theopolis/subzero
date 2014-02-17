@@ -134,18 +134,22 @@ class Controller(object):
                 "sha256": hashlib.sha256(content).hexdigest()
             }
         }).run()
+        print "Loaded meta for object (%s) %s." % (_object["firmware_id"], _object["id"])
         pass
 
     def command_load_meta(self, db, args):
-        fvs = db.table("updates").filter({"machine": args.machine}).order_by("version").pluck("version", "firmware_id").run()
-        #fvs = [(_fv["version"], _fv["firmware_id"]) for _fv in fvs]
-
-        for fv in fvs:
-            objects = db.table("objects").filter({"firmware_id": fv["firmware_id"]}).pluck("firmware_id", "id", "content").run()
-            objects = [obj for obj in objects]
-            for obj in objects:
-                self._load_meta(db, obj)
-                #return
+        def load_objects(firmware_id):
+            objects = db.table("objects").filter({"firmware_id": firmware_id})\
+                .pluck("firmware_id", "id", "object_id", "content").run()
+            for _object in objects:
+                self._load_meta(db, _object)
+                if "object_id" in _object.keys():
+                    load_objects(_object["object_id"])
+            
+        fobjects = db.table("updates").filter({"machine": args.machine}).order_by("version").\
+            pluck("version", "firmware_id").run()
+        for _object in fobjects:
+            load_objects(_object["firmware_id"])
 
     def _dump_pe(self, _object):
         def _get_pes(_object):

@@ -4,10 +4,12 @@ import pefile
 import os
 import base64
 import copy
+import sys
 
 import rethinkdb as r
 
 from uefi_firmware import *
+from uefi_firmware.pfs import PFSFile
 
 def _brute_search(data):
     volumes = search_firmware_volumes(data)
@@ -102,11 +104,12 @@ def _load_pe(_object):
         pe_info["sections"][section.Name.replace("\x00", "") + "_md5"] = hashlib.md5(section.get_data(0)).hexdigest()
 
 def _object_entry(_object):
-    return {key: value for key, value in _object.iteritems() if key in ["guid", "type", "attrs"]}
+    return {key: value for key, value in _object.iteritems() if key in ["guid", "type", "attrs", "object_id", "chunks", "other"]}
 
-def store_object(_object):
+def store_object(firmware_id, _object):
     if "_self" in _object:
-        if not isinstance(_object["_self"], EfiSection):
+        ### If this is an EFI object, it must be a basic object (section object)
+        if isinstance(_object["_self"], FirmwareObject) and not isinstance(_object["_self"], EfiSection): 
             return None
 
     '''Store base objects only.'''
@@ -122,12 +125,12 @@ def store_object(_object):
 
     children = []
     for _sub_object in _object["objects"]:
-        key = store_object(_sub_object)
+        key = store_object(firmware_id, _sub_object)
         if key is not None:
             children += key
     return children
 
-def store_file(file):
+def store_file(firmware_id, file):
     entry = _object_entry(file)
 
     if not db.table("files").filter({"firmware_id": firmware_id, "guid": file["guid"]}).is_empty().run():
@@ -136,13 +139,13 @@ def store_file(file):
 
     children = []
     for _object in file["objects"]:
-        children += store_object(_object)
+        children += store_object(firmware_id, _object)
     #print children
 
     if len(children) == 0:
         print "Storing a cloned child for (%s)." % file["guid"]
         entry["no_children"] = True
-        children += store_object(file)
+        children += store_object(firmware_id, file)
 
     entry["children"] = children
     entry["firmware_id"] = firmware_id
@@ -151,10 +154,46 @@ def store_file(file):
     entry["description"] = file["description"]
 
     db.table("files").insert(entry).run()
+    print "Stored UEFI file (%s) %s." % (firmware_id, file["guid"])
 
+def load_uefi_volumes(firmware_id, data):
+    objects = _brute_search(data)
+
+    files = get_files(objects)
+    for key in files:
+        store_file(firmware_id, files[key])
+
+    pass
+
+def load_pfs(firmware_id, data):
+    pfs = PFSFile(data)
+    if not pfs.check_header():
+        print "This is not a valid DELL PFS update."
+        sys.exit(1)
+
+    pfs.process()
+    for section in pfs.objects:
+        section_info = section.info(include_content= True)
+
+        if not db.table("objects").filter({"firmware_id": firmware_id, "guid": section_info["guid"]}).is_empty().run():
+            print "Skipping GUID %s, object exists." % section_info["guid"]
+            continue
+
+        section_id = hashlib.md5(section_info["content"]).hexdigest()
+        section_info["object_id"] = section_id
+        section_info["chunks"] = [base64.b64encode(chunk) for chunk in section_info["chunks"]]
+
+        store_object(firmware_id, section_info)
+        print "Stored PFS object (%s) %s." % (firmware_id, section_info["guid"])
+
+        load_uefi_volumes(section_id, section_info["content"])
+    pass
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--pfs", action="store_true", default=False, help="This is a DELL PFS update.")
+    parser.add_argument("--bios", action="store_true", default=False, help="This is a BIOS ROM.")
+    parser.add_argument("--me", action="store_true", default=False, help="This is an Intel ME container.")
     parser.add_argument("file", help="The file to work on")
 
     args = parser.parse_args()
@@ -166,7 +205,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     firmware_id = hashlib.md5(input_data).hexdigest()
-    objects = _brute_search(input_data)
     
     r.connect("localhost", 28015).repl()
     db = r.db("uefi")
@@ -177,8 +215,10 @@ if __name__ == "__main__":
             "size": len(input_data)
         }).run()
 
-    files = get_files(objects)
-    for key in files:
-        store_file(files[key])
+    if args.pfs:
+        load_pfs(firmware_id, input_data)
+    elif args.pfs:
+        load_uefi_volumes(firmware_id, input_data)
+
 
 

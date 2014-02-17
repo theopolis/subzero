@@ -1,5 +1,5 @@
 - content_for :title do
-  Explorer - Firmware
+  Explorer - Firmware Objects
 
 .none
   Firmware ID: 
@@ -10,34 +10,28 @@
     %thead
       %tr
         %th GUID
-        %th Objects
+        %th Info
         %th Size
-        %th Name
         %th Stats
         %th Actions
     %tbody
-      - @files.each do |file|
+      - @objects.each do |obj|
         %tr
           %td 
             %div
-              %a{ :href => "/explorer/file/#{@firmware_id}/#{file["guid"]}"}
-                #{file["guid"]}
-            %small (#{file["attrs"]["type_name"]})
+              %a{ :href => "/explorer/uefi/#{obj["object_id"]}"}
+                #{obj["guid"]}
+            %small (#{obj["attrs"]["type"]})
+          %td
+            - if obj.has_key?("description")
+              .none= obj["description"]
+            - if obj.has_key?("load_meta")
+              %small (#{obj["load_meta"]["magic"]})
+            -# obj["objects"].each do |sub_obj|
+          %td #{obj["attrs"]["size"]} 
           %td 
-
-            - file["objects"].each do |obj|
-              %div 
-                #{obj["attrs"]["type_name"]} #{obj["attrs"]["size"]} 
-                - if obj.has_key? ("load_meta")
-                  %small (#{obj["load_meta"]["magic"]})
-          %td #{file["attrs"]["size"]} 
-          %td 
-            .none #{file["name"]} 
-            - if file["description"] != nil and file["description"].length > 0
-              %small (#{file["description"]})
-          %td 
-            - if file.has_key? ("stats")
-              - file["stats"].each do |key, value|
+            - if obj.has_key? ("stats")
+              - obj["stats"].each do |key, value|
                 %b= key
                 %small= value
           %td 

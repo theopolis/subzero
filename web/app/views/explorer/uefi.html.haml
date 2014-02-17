@@ -1,0 +1,43 @@
+- content_for :title do
+  Explorer - UEFI Files
+
+.none
+  Firmware ID: 
+  = @firmware_id
+
+%div
+  %table.table.table-bordered.table-striped.table-hover
+    %thead
+      %tr
+        %th GUID
+        %th Objects
+        %th Size
+        %th Name
+        %th Stats
+        %th Actions
+    %tbody
+      - @files.each do |file|
+        %tr
+          %td 
+            %div
+              %a{ :href => "/explorer/file/#{@firmware_id}/#{file["guid"]}"}
+                #{file["guid"]}
+            %small (#{file["attrs"]["type_name"]})
+          %td 
+
+            - file["objects"].each do |obj|
+              %div 
+                #{obj["attrs"]["type_name"]} #{obj["attrs"]["size"]} 
+                - if obj.has_key? ("load_meta")
+                  %small (#{obj["load_meta"]["magic"]})
+          %td #{file["attrs"]["size"]} 
+          %td 
+            .none #{file["name"]} 
+            - if file["description"] != nil and file["description"].length > 0
+              %small (#{file["description"]})
+          %td 
+            - if file.has_key? ("stats")
+              - file["stats"].each do |key, value|
+                %b= key
+                %small= value
+          %td 
