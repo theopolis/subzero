@@ -1,0 +1,34 @@
+.container
+  - if defined?(stats)
+    .row
+      %div.col-lg-4
+        %table.table.table-bordered.table-striped.table-hover
+          %thead
+            %tr
+              %th Key
+              %th Value
+          %tbody
+            - stats.each do |key, value|
+              %tr
+                %td= key
+                %td= value
+
+  - objects.each do |obj|
+    .row
+      %div.col-lg-4
+        .h4 
+          Object
+          = obj["id"]
+        %table.table.table-bordered.table-striped.table-hover
+          %thead
+            %tr
+              %th Key
+              %th Value
+          %tbody
+            - obj["stats"].each do |key, value|
+              %tr
+                %td= key
+                %td= value
+        .download
+          = link_to "/explorer/download/#{obj["id"]}" do
+            Download

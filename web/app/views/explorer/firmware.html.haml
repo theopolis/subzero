@@ -19,8 +19,15 @@
         %tr
           %td 
             %div
-              %a{ :href => "/explorer/uefi/#{obj["object_id"]}"}
-                #{obj["guid"]}
+              #{obj["guid"]}
+              %small
+                (
+                %a{ :href => "/explorer/uefi/#{obj["object_id"]}"}>="uefi"
+                )
+                (
+                %a{ :href => "/explorer/raw/#{@firmware_id}/#{obj["id"]}"}>="raw"
+                )
+
             %small (#{obj["attrs"]["type"]})
           %td
             - if obj.has_key?("description")

@@ -19,6 +19,17 @@ def _dump_data(name, data):
     except Exception, e:
         print "Error: could not write (%s), (%s)." % (name, str(e))
 
+def _object_compare(obj1, obj2):
+    content1 = base64.b64decode(obj1)
+    content2 = base64.b64decode(obj2)
+    min_size = min(len(content1), len(content2))
+    max_size = max(len(content1), len(content2))
+    change_score = max_size - min_size
+    for i in xrange(min_size):
+        if content1[i] != content2[i]:
+            change_score += 1 
+    return change_score   
+
 def _file_compare(db, file1, file2):
     md5_1 = hashlib.md5(file1["content"]).hexdigest()
     md5_2 = hashlib.md5(file2["content"]).hexdigest()
@@ -32,14 +43,7 @@ def _file_compare(db, file1, file2):
 
     change_score = 0
     for i in xrange(len(objects1)):
-        content1 = base64.b64decode(objects1[i]["content"])
-        content2 = base64.b64decode(objects2[i]["content"])
-        min_size = min(len(content1), len(content2))
-        max_size = max(len(content1), len(content2))
-        change_score += max_size - min_size
-        for i in xrange(min_size):
-            if content1[i] != content2[i]:
-                change_score += 1
+        change_score += _object_compare(objects1[i]["content"], objects2[i]["content"])
 
     return change_score
     pass
@@ -60,36 +64,37 @@ class Controller(object):
         for _file in files: print "%s %s %s (%s)" % (_file["guid"], _file["attrs"]["size"], _file["name"], _file["description"])
         pass
 
-    def _compare_fv(self, db, fv1, fv2, save= False):
-        files1 = db.table("files").filter({"firmware_id": fv1[1]}).run()
-        files2 = db.table("files").filter({"firmware_id": fv2[1]}).run()
+    def _compare_fv(self, db, fvid1, fvid2, save= False):
+        files1 = db.table("files").filter({"firmware_id": fvid1}).run()
+        files2 = db.table("files").filter({"firmware_id": fvid2}).run()
 
         files_list1 = {_file["guid"]: _file for _file in files1}
         files_list2 = {_file["guid"]: _file for _file in files2}
 
         if len(files_list1) == 0 or len(files_list2) == 0:
-            print "Cannot compare versions (%d, %d) without loaded firmware." % (fv1[0], fv2[0])
-            return 
+            print "Cannot compare volumes (%s -> %s) without loaded firmware." % (fvid1, fvid2)
+            return 0
 
         change_score = 0
         new_files = []
         new_files_score = 0
         for guid, _file in files_list1.iteritems():
             if guid not in files_list2:
-                print "%s (%s) not in %s" % (guid, _file["name"], fv1[1])
+                print "%s (%s) not in %s" % (guid, _file["name"], fvid1)
                 change_score += files_list1[guid]["attrs"]["size"]
                 pass
         for guid, _file in files_list2.iteritems():
             if guid not in files_list1:
-                print "%s (%s) not in %s" % (guid, _file["name"], fv2[1])
+                print "%s (%s) not in %s" % (guid, _file["name"], fvid2)
                 change_score += files_list2[guid]["attrs"]["size"]
                 new_files.append(guid)
                 new_files_score += files_list2[guid]["attrs"]["size"]
 
                 if save:
-                    db.table("files").filter({"firmware_id": fv2[1], "guid": guid}).update(
+                    db.table("files").filter({"firmware_id": fvid2, "guid": guid}).update(
                         {"load_change": {"new_file": True}}
                     ).run()
+                    print "New file (%s) %s." % (fvid2, guid)
                 pass
 
         for guid, _file in files_list1.iteritems():
@@ -97,30 +102,80 @@ class Controller(object):
             score = _file_compare(db, _file, files_list2[guid])
             if score == 0: continue
 
-            db.table("files").filter({"firmware_id": fv2[1], "guid": guid}).update(
+            db.table("files").filter({"firmware_id": fvid2, "guid": guid}).update(
                 {"load_change": {"change_score": score}
             }).run()
+            print "Loaded change for file (%s) %s of %d." % (fvid2, guid, score)
 
             change_score += score
 
-        if save:
-            db.table("updates").filter({"firmware_id": fv2[1]}).update(
-                {"load_change": {
-                    "change_score": change_score, 
-                    "new_files": new_files,
-                    "new_files_score": new_files_score
-                }
-            }).run()
-        print "Versions (%d, %d) change: %d" % (fv1[0], fv2[0], change_score)
+        return {"change_score": change_score, "new_files": new_files, "new_files_score": new_files_score}
+        pass
+
+    def _compare_firmware(self, db, firmware1, firmware2, save= False):
+        ### Query firmware objects
+        if len(firmware1[2]) == 0 or len(firmware2[2]) == 0:
+            print "Cannot compare versions (%d -> %d) without loaded firmware." % (firmware1[0], firmware1[0])
+            return 
+
+        if len(firmware1[2]) != len(firmware2[2]):
+            print "Firmware object count has changed between versions (%d -> %d)." % (firmware1[0], firmware1[0])
+            return
+
+        firmware_change_score = 0
+        for guid in firmware1[2].keys():
+            object_change_score = 0
+            if firmware1[2][guid] == firmware2[2][guid]:
+                ### Objects are indexed by their hash
+                continue
+            ### Apply some check if to determine if the object was a set of firmware volumes
+            if not db.table("files").filter({"firmware_id": firmware1[2][guid]}).is_empty().run():
+                #print "Would compare FV for %s." % guid
+                #continue
+                changes = self._compare_fv(db, firmware1[2][guid], firmware2[2][guid])
+                db.table("objects").filter({"object_id": firmware2[2][guid]}).update({
+                    "load_change": changes
+                }).run()
+
+            ### Apple some check to determine if ME
+
+            ### Compare objects directly
+            else:
+                object1 = db.table("objects").filter({"object_id": firmware1[2][guid]}).pluck("content").run()
+                object1 = [_obj["content"] for _obj in object1][0]
+
+                object2 = db.table("objects").filter({"object_id": firmware2[2][guid]}).pluck("content").run()
+                object2 = [_obj["content"] for _obj in object2][0]
+
+                object_change_score = _object_compare(object1, object2)
+                db.table("objects").filter{"object_id": firmware2[2][guid]}).update({
+                    "load_change": {"change_score": object_change_score}
+                })
+
+            firmware_change_score += object_change_score
+            print "Object %s change: %d." % (guid, object_change_score)
+
+            ### Save changes to firmware object
+            if not save: continue
+
+
+        ### Save changes to update
 
         pass
 
     def command_load_change(self, db, args):
-        fvs = db.table("updates").filter({"machine": args.machine}).order_by("version").pluck("version", "firmware_id").run()
-        fvs = [(_fv["version"], _fv["firmware_id"]) for _fv in fvs]
+        updates = db.table("updates").filter({"machine": args.machine}).order_by("version").\
+            pluck("version", "firmware_id", "type").run()
+        firmware_objects = []
 
-        for i in xrange(len(fvs)-1):
-            self._compare_fv(db, fvs[i], fvs[i+1], True)
+        for update in updates:
+            objects = db.table("objects").filter({"firmware_id": update["firmware_id"]}).\
+            pluck("object_id", "guid").run()
+            objects = {_obj["guid"]:_obj["object_id"] for _obj in objects}
+            firmware_objects.append((update["version"], update["firmware_id"], objects))
+
+        for i in xrange(len(firmware_objects)-1):
+            self._compare_firmware(db, firmware_objects[i], firmware_objects[i+1], True)
 
     def _load_meta(self, db, _object):
         content = base64.b64decode(_object["content"])

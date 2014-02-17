@@ -1,0 +1,12 @@
+- content_for :title do
+  Explorer - Raw
+
+.container
+  .row
+    .none
+      Firmware ID: 
+      = @firmware_id
+      ID: 
+      = @id
+
+= render "object", :objects => [@object]

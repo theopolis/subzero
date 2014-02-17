@@ -44,6 +44,20 @@ class ExplorerController < ApplicationController
 
   end
 
+  def raw
+    @firmware_id = params[:firmware_id]
+    @id = params[:id]    
+
+    ### Get Information about object
+    cursor = r.db("uefi").table("objects").filter{|obj| 
+        (obj["firmware_id"].eq(@firmware_id)) & (obj["id"].eq(@id))
+      }.pluck("name", "guid", "description", "attrs", "load_change", "size", "id", "load_meta").limit(1).run
+
+    ### Silly construct
+    cursor.each{ |obj| @object = obj }
+    add_object_stats!(@object)
+  end
+
   def file
     @firmware_id = params[:firmware_id]
     @guid = params[:id]
@@ -54,15 +68,12 @@ class ExplorerController < ApplicationController
       }.pluck("name", "guid", "description", "attrs", "load_change", "size").limit(1).run
 
     ### Silly construct
-    cursor.each do |file|
-      @file = file
-      break
-    end
+    cursor.each{ |file| @file = file }
 
     ### Stats will display a table of key=>value details
     @stats = {
-      "name" => @file["name"],
-      "description" => @file["description"],
+      "name" => @file.has_key?("name") ? @file["name"] : "",
+      "description" => @file.has_key?("description") ? @file["description"] : "",
     }
     @stats = @stats.deep_merge(@file["attrs"])
 
@@ -70,15 +81,11 @@ class ExplorerController < ApplicationController
     @objects = []
     cursor = r.db("uefi").table("objects").filter{|obj| 
         (obj["firmware_id"].eq(@firmware_id)) & (obj["guid"].eq(@guid))
-      }.pluck("attrs", "load_meta", "id").
+      }.pluck("attrs", "load_meta", "load_change", "id").
       order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
 
     cursor.each do |obj|
-      obj["stats"] = obj["attrs"]
-      if obj.has_key?("load_meta")
-        obj["stats"] = obj["stats"].merge(obj["load_meta"])
-      end
-
+      add_object_stats!(obj)
       @objects.push(obj)
     end
 
@@ -103,15 +110,16 @@ class ExplorerController < ApplicationController
     end
 
     cursor = r.db("uefi").table("objects").filter{|obj| obj["firmware_id"].eq(@firmware_id)}.
-      pluck("attrs", "guid", "object_id", "load_meta").
+      pluck("attrs", "guid", "object_id", "id", "load_meta").
       order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
 
     cursor.each do |obj|
       ### Todo: handle each type of firmware, populate obj["objects"]
       obj["objects"] = []
       add_lookups!(obj)
+      add_object_stats!(obj, attrs = false, meta = false)
 
-      obj["stats"] = {}
+      ### This is a different type of stats
       objects_count = r.db("uefi").table("objects").count{|_obj| _obj["firmware_id"].eq(obj["object_id"])}.run
       files_count = r.db("uefi").table("files").count{|_obj| _obj["firmware_id"].eq(obj["object_id"])}.run
       if objects_count > 0 then obj["stats"]["Objects"] = objects_count end
@@ -150,27 +158,20 @@ class ExplorerController < ApplicationController
       end
 
       add_lookups!(file)
-      
       ### Add an assortment of stats
-      if file.has_key? ("load_change")
-        file["stats"] = {}
-        if file["load_change"].has_key? ("change_score") and file["load_change"]["change_score"] > 0
-          file["stats"]["Changed"] = "%d bytes, %.2f%" % [file["load_change"]["change_score"], percent_change(file)]
-        end
-        if file["load_change"].has_key? ("new_file")
-          file["stats"]["New File"] = true
-        end
-      end
-
+      add_object_stats!(file, attrs = false, meta = false)
       @files.push(file)
     end
-
 
   end
 
 private
   def db_connect
   	r.connect(:host => "localhost").repl
+  end
+
+  def object_stats! (_obj)
+
   end
 
   def percent_change (_obj)
@@ -180,24 +181,35 @@ private
   end
 
   def lookups
-    if @lookups != nil
-      return @lookups
-    end
+    if @lookups != nil then return @lookups end
 
     ### Search for optional lookup values which better describe each file
     @lookups = {}
     cursor = r.db("uefi").table("lookup").run
-    cursor.each do |lookup|
-      @lookups[lookup["guid"]] = lookup
-    end
+    cursor.each{ |lookup| @lookups[lookup["guid"]] = lookup }
     return @lookups
+  end
+
+  def add_object_stats! (obj, attrs = true, meta = true)
+    if attrs then obj["stats"] = obj["attrs"] else obj["stats"] = {} end
+    if meta and obj.has_key?("load_meta") then obj["stats"] = obj["stats"].merge(obj["load_meta"]) end
+
+    if obj.has_key? ("load_change")
+      obj["stats"] = {}
+      if obj["load_change"].has_key? ("change_score") and obj["load_change"]["change_score"] > 0
+        obj["stats"]["Changed"] = "%d bytes, %.2f%" % [obj["load_change"]["change_score"], percent_change(obj)]
+      end
+      if obj["load_change"].has_key? ("new_file")
+        obj["stats"]["New File"] = true
+      end
+    end
   end
 
   def add_lookups! (_obj)
     lookups = lookups()
     if lookups.has_key?(_obj["guid"])
       lookups[_obj["guid"]].each do |key, value|
-        next if key == "guid"
+        next if ["guid", "id"].include?(key)
         _obj[key] = "*%s" % value
       end
     end
