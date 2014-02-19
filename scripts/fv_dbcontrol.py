@@ -115,28 +115,45 @@ class Controller(object):
     def _compare_firmware(self, db, firmware1, firmware2, save= False):
         ### Query firmware objects
         if len(firmware1[2]) == 0 or len(firmware2[2]) == 0:
-            print "Cannot compare versions (%d -> %d) without loaded firmware." % (firmware1[0], firmware1[0])
+            print "Cannot compare versions (%d -> %d) without loaded firmware." % (firmware1[0], firmware2[0])
             return 
 
+        firmware_change_score = 0
+        firmware_added_objects = []
+        firmware_added_objects_score = 0
         if len(firmware1[2]) != len(firmware2[2]):
-            print "Firmware object count has changed between versions (%d -> %d)." % (firmware1[0], firmware1[0])
-            return
+            print "Firmware object count has changed between versions (%d -> %d)." % (firmware1[0], firmware2[0])
 
         firmware_change_score = 0
-        for guid in firmware1[2].keys():
+        for guid in firmware2[2].keys():
             object_change_score = 0
-            if firmware1[2][guid] == firmware2[2][guid]:
+            if guid in firmware1[2] and firmware1[2][guid] == firmware2[2][guid]:
                 ### Objects are indexed by their hash
                 continue
+
+            ### Check if this is a new object
+            if guid not in firmware2[2]:
+                firmware_added_objects += 1
+
+                object1 = db.table("objects").filter({"object_id": firmware2[2][guid]}).pluck("content").run()
+                object1 = [_obj["content"] for _obj in object1][0]
+                firmware_added_objects.append((firmware1[2][guid], ""))
+                firmware_added_objects_score += object1["attrs"]["size"]
+                object_change_score = object1["attrs"]["size"]
+
             ### Apply some check if to determine if the object was a set of firmware volumes
-            if not db.table("files").filter({"firmware_id": firmware1[2][guid]}).is_empty().run():
+            elif not db.table("files").filter({"firmware_id": firmware1[2][guid]}).is_empty().run():
                 #print "Would compare FV for %s." % guid
                 #continue
-                changes = self._compare_fv(db, firmware1[2][guid], firmware2[2][guid])
+                changes = self._compare_fv(db, firmware1[2][guid], firmware2[2][guid], True)
                 db.table("objects").filter({"object_id": firmware2[2][guid]}).update({
                     "load_change": changes
                 }).run()
 
+                if "new_files" in changes:
+                    firmware_added_objects += [(firmware1[2][guid], _file) for _file in changes["new_files"]]
+                    firmware_added_objects_score += changes["new_files_score"]
+                object_change_score = changes["change_score"]
             ### Apple some check to determine if ME
 
             ### Compare objects directly
@@ -148,33 +165,39 @@ class Controller(object):
                 object2 = [_obj["content"] for _obj in object2][0]
 
                 object_change_score = _object_compare(object1, object2)
-                db.table("objects").filter{"object_id": firmware2[2][guid]}).update({
+                db.table("objects").filter({"object_id": firmware2[2][guid]}).update({
                     "load_change": {"change_score": object_change_score}
-                })
+                }).run()
 
             firmware_change_score += object_change_score
             print "Object %s change: %d." % (guid, object_change_score)
 
-            ### Save changes to firmware object
-            if not save: continue
-
-
         ### Save changes to update
-
+        db.table("updates").filter({"firmware_id": firmware2[1]}).update({
+            "load_change": {
+                "change_score": firmware_change_score,
+                "new_files": firmware_added_objects,
+                "new_files_score": firmware_added_objects_score
+            }
+        }).run()
+        print "Firmware %s change: %d" % (firmware2[1], firmware_change_score)
         pass
 
     def command_load_change(self, db, args):
         updates = db.table("updates").filter({"machine": args.machine}).order_by("version").\
-            pluck("version", "firmware_id", "type").run()
+            pluck("version", "firmware_id", "type", "load_change").run()
         firmware_objects = []
 
         for update in updates:
             objects = db.table("objects").filter({"firmware_id": update["firmware_id"]}).\
             pluck("object_id", "guid").run()
             objects = {_obj["guid"]:_obj["object_id"] for _obj in objects}
-            firmware_objects.append((update["version"], update["firmware_id"], objects))
+            firmware_objects.append((update["version"], update["firmware_id"], objects, "load_change" in update))
 
         for i in xrange(len(firmware_objects)-1):
+            if not args.force and firmware_objects[i+1][3]:
+                print "Skipping change comparison (%d -> %d), already completed." % (firmware_objects[i][0], firmware_objects[i+1][0])
+                continue
             self._compare_firmware(db, firmware_objects[i], firmware_objects[i+1], True)
 
     def _load_meta(self, db, _object):
@@ -202,8 +225,11 @@ class Controller(object):
                     load_objects(_object["object_id"])
             
         fobjects = db.table("updates").filter({"machine": args.machine}).order_by("version").\
-            pluck("version", "firmware_id").run()
+            pluck("version", "firmware_id", "load_meta").run()
         for _object in fobjects:
+            if not args.force and "load_meta" in _object:
+                print "Skipping parsing of (%s), already completed." % _object["firmware_id"]
+                continue
             load_objects(_object["firmware_id"])
 
     def _dump_pe(self, _object):
@@ -328,9 +354,11 @@ def main():
     '''Simple loading/parsing commands.'''
     parser_load_change = subparsers.add_parser("load_change", help= "Load change scores for files and firmware.")
     parser_load_change.add_argument("machine", help="Machine name to load.")
+    parser_load_change.add_argument("-f", "--force", action="store_true", default= False, help="Force recalculation.")
 
     parser_load_meta = subparsers.add_parser("load_meta", help= "Extract meta, hashes for a machine's firmware.")
     parser_load_meta.add_argument("machine", help= "Machien name to load.")
+    parser_load_meta.add_argument("-f", "--force", action="store_true", default= False, help="Force recalculation.")
 
     parser_add_lookup = subparsers.add_parser("add_lookup", help= "Add metadata about a file GUID.")
     parser_add_lookup.add_argument("guid", help= "File GUID")
