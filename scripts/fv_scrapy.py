@@ -161,7 +161,7 @@ if __name__ == "__main__":
         continue
 
       update = load_details(details, file_name)
-      if not table.filter({"item_id": update["item_id"]}).is_empty().run():
+      if not table.get_all(update["item_id"], index="item_id").is_empty().run():
         print "ItemID: %s is a duplicate, skipping." % update["item_id"]
         continue
       updates.append(update) 

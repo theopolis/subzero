@@ -133,7 +133,7 @@ def store_object(firmware_id, _object):
 def store_file(firmware_id, file):
     entry = _object_entry(file)
 
-    if not db.table("files").filter({"firmware_id": firmware_id, "guid": file["guid"]}).is_empty().run():
+    if not db.table("files").get_all(firmware_id, index="firmware_id").filter({"guid": file["guid"]}).is_empty().run():
         '''If the file already exists for this GUID/FirmwareID pair, skip.'''
         print "Skipping file (%s) guid (%s), already exists." % (fimrware_id, file["guid"])
         return
@@ -176,10 +176,7 @@ def load_capsule(firmware_id, data):
 
     volume = capsule.capsule_body
     volume_info = volume.info(include_content= True)
-    if not db.table("objects").filter({
-        "firmware_id": firmware_id,
-        "guid": volume_info["guid"]
-        }).is_empty().run():
+    if not db.table("objects").get_all(firmware_id, index="firmware_id").filter({"guid": volume_info["guid"]}).is_empty().run():
         print "Skipping GUID %s, object exists." % volume_info["guid"]
         return
 
@@ -199,7 +196,7 @@ def load_pfs(firmware_id, data):
     for section in pfs.objects:
         section_info = section.info(include_content= True)
 
-        if not db.table("objects").filter({"firmware_id": firmware_id, "guid": section_info["guid"]}).is_empty().run():
+        if not db.table("objects").get_all(firmware_id, index="firmware_id").filter({"guid": section_info["guid"]}).is_empty().run():
             print "Skipping GUID %s, object exists." % section_info["guid"]
             continue
 
@@ -216,15 +213,15 @@ def load_pfs(firmware_id, data):
 def set_update(firmware_id, data, label_type, item_id= None):
     ### Set the label for the item
     if item_id is not None:
-        db.table("updates").filter({"item_id": item_id}).update({
+        db.table("updates").get_all(item_id, index="item_id").update({
             "firmware_id": firmware_id,
             "type": label_type
         }).run()
         print "Updating update %s to firmware ID: %s (%s)." % (item_id, firmware_id, label_type)
 
-    if not db.table("updates").filter({"firmware_id": firmware_id}).is_empty().run():
+    if not db.table("updates").get_all(firmware_id, index="firmware_id").is_empty().run():
         ### Add size of the firmware to the updates table
-        db.table("updates").filter({"firmware_id": firmware_id}).update({
+        db.table("updates").get_all(firmware_id, index="firmware_id").update({
             "size": len(data)
         }).run()
         print "Updating size for firmware ID: %s (%s)." % (firmware_id, label_type)
