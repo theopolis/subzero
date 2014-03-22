@@ -6,8 +6,39 @@ include RethinkDB::Shortcuts
 class ExplorerController < ApplicationController
   before_filter :db_connect
 
-  # GET /explorer
   def explorer
+    ### There is nothing on this page for now
+  end
+
+  def products
+    @products = {}
+    ### Iterate the updates and count the number per machine
+    updates = r.db("uefi").table("updates").
+      pluck("version", "products", "date", "vendor", "item_id", "attrs", "name", "firmware_id", "size").
+      order_by(r.asc(lambda {|doc| doc[:date]})).run
+    updates.each do |doc|
+      doc["products"].each do |product|
+        unless @products.has_key?(product)
+          @products[product] = []
+        end
+        ### Add the version/date/vendor
+        @products[product].push({
+          :name => doc["name"], 
+          :version => doc["version"], 
+          :date => doc["date"], 
+          :vendor => doc["vendor"], 
+          :item_id => doc["item_id"],
+          :firmware_id => doc["firmware_id"],
+          :size => doc["size"],
+          :status => doc["attrs"]["status"]
+        })
+      end
+    end
+    ### Leave counting/stats up to the viewer.
+  end
+
+  # GET /explorer
+  def explorer_old
   	@firmware = {}
 
   	updates = r.db("uefi").table("updates").
@@ -110,7 +141,7 @@ class ExplorerController < ApplicationController
     end
 
     cursor = r.db("uefi").table("objects").filter{|obj| obj["firmware_id"].eq(@firmware_id)}.
-      pluck("attrs", "guid", "object_id", "id", "load_meta").
+      pluck("attrs", "guid", "object_id", "id", "load_meta", "load_change").
       order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
 
     cursor.each do |obj|
@@ -191,11 +222,11 @@ private
   end
 
   def add_object_stats! (obj, attrs = true, meta = true)
-    if attrs then obj["stats"] = obj["attrs"] else obj["stats"] = {} end
+    obj["stats"] = {}
+    if attrs then obj["stats"] = obj["attrs"] end
     if meta and obj.has_key?("load_meta") then obj["stats"] = obj["stats"].merge(obj["load_meta"]) end
 
     if obj.has_key? ("load_change")
-      obj["stats"] = {}
       if obj["load_change"].has_key? ("change_score") and obj["load_change"]["change_score"] > 0
         obj["stats"]["Changed"] = "%d bytes, %.2f%" % [obj["load_change"]["change_score"], percent_change(obj)]
       end

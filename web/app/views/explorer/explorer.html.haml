@@ -1,23 +1,23 @@
 - content_for :title do
   Explorer
-- last_update = 0
 
 %h3
-  %div Firmware List
+  %div Subzero Explorer
 
-- @firmware.each do |machine, updates|
-  %h5= machine
-  %div
-    %table.table.table-bordered.table-striped.table-hover
-      %thead
-        %tr
-          %th ID
-          %th Name
-          %th Date
-          %th Stats
-          %th Firmware ID
-          %th Actions
-      %tbody
-        - updates.each do |firmware_update|
-          = render "firmware", :firmware => firmware_update, :last_update => last_update
-          - last_update = firmware_update["date"]
+.container
+  .row
+    .col-md-4
+      %h4 Products
+      .explore-link
+        %a{ :href => "/explorer/products"} 
+          Click Me Picture
+    .col-md-4
+      %h4 Vendors
+      .explore-link
+        %a{ :href => "/explorer/vendors"} 
+          Click Me Picture
+    .col-md-4
+      %h4 Objects
+      .explore-link
+        %a{ :href => "/explorer/objects"} 
+          Click Me Picture

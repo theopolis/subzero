@@ -218,8 +218,11 @@ class Controller(object):
     def command_load_meta(self, db, args):
         def load_objects(firmware_id):
             objects = db.table("objects").filter({"firmware_id": firmware_id})\
-                .pluck("firmware_id", "id", "object_id", "content").run()
+                .pluck("firmware_id", "id", "object_id", "content", "load_meta").run()
             for _object in objects:
+                if not args.force and "load_meta" in _object:
+                    print "Skipping parsing of (%s) (%s), already completed." % (firmware_id, _object["id"])
+                    continue
                 self._load_meta(db, _object)
                 if "object_id" in _object.keys():
                     load_objects(_object["object_id"])

@@ -11,17 +11,17 @@ import rethinkdb as r
 from uefi_firmware import *
 from uefi_firmware.pfs import PFSFile
 
-def _brute_search(data):
-    volumes = search_firmware_volumes(data)
+def brute_search(data):
+    volumes = utils.search_firmware_volumes(data)
     objects = []
 
     for index in volumes:
-        objects += _parse_firmware_volume(data[index-40:], name=index)
+        objects += parse_firmware_volume(data[index-40:], name=index)
     return objects
     pass
 
-def _parse_firmware_volume(data, name="volume"):
-    firmware_volume = FirmwareVolume(data, name)
+def parse_firmware_volume(data, name="volume"):
+    firmware_volume = uefi.FirmwareVolume(data, name)
     firmware_volume.process()
 
     objects = firmware_volume.iterate_objects(True)
@@ -33,7 +33,7 @@ def get_file_name(_object):
     if not "objects" in _object:
         return None
     for _sub_object in _object["objects"]:
-        if not isinstance(_sub_object["_self"], EfiSection):
+        if not isinstance(_sub_object["_self"], uefi.EfiSection):
             continue
         name = get_file_name(_sub_object)
         if name is not None:
@@ -41,12 +41,12 @@ def get_file_name(_object):
     return None
 
 def get_file_description(_object):
-    if isinstance(_object["_self"], FreeformGuidSection):
+    if isinstance(_object["_self"], uefi.FreeformGuidSection):
         return _object["label"]
     if "objects" not in _object:
         return None
     for _sub_object in _object["objects"]:
-        if not isinstance(_sub_object["_self"], EfiSection):
+        if not isinstance(_sub_object["_self"], uefi.EfiSection):
             continue
         description = get_file_description(_sub_object)
         if description is not None:
@@ -109,7 +109,7 @@ def _object_entry(_object):
 def store_object(firmware_id, _object):
     if "_self" in _object:
         ### If this is an EFI object, it must be a basic object (section object)
-        if isinstance(_object["_self"], FirmwareObject) and not isinstance(_object["_self"], EfiSection): 
+        if isinstance(_object["_self"], uefi.FirmwareObject) and not isinstance(_object["_self"], uefi.EfiSection): 
             return None
 
     '''Store base objects only.'''
@@ -135,6 +135,7 @@ def store_file(firmware_id, file):
 
     if not db.table("files").filter({"firmware_id": firmware_id, "guid": file["guid"]}).is_empty().run():
         '''If the file already exists for this GUID/FirmwareID pair, skip.'''
+        print "Skipping file (%s) guid (%s), already exists." % (fimrware_id, file["guid"])
         return
 
     children = []
@@ -157,13 +158,36 @@ def store_file(firmware_id, file):
     print "Stored UEFI file (%s) %s." % (firmware_id, file["guid"])
 
 def load_uefi_volumes(firmware_id, data):
-    objects = _brute_search(data)
+    objects = brute_search(data)
 
     files = get_files(objects)
     for key in files:
         store_file(firmware_id, files[key])
-
     pass
+
+def load_capsule(firmware_id, data):
+    capsule = uefi.FirmwareCapsule(data)
+    if not capsule.valid_header:
+        print "This is not a valid UEFI firmware capsule."
+        sys.exit(1)
+    
+    capsule.process()
+    ### Todo: insert Capsule information
+
+    volume = capsule.capsule_body
+    volume_info = volume.info(include_content= True)
+    if not db.table("objects").filter({
+        "firmware_id": firmware_id,
+        "guid": volume_info["guid"]
+        }).is_empty().run():
+        print "Skipping GUID %s, object exists." % volume_info["guid"]
+        return
+
+    volume_id = get_firmware_id(volume_info["content"])
+    objects = volume.iterate_objects(True)
+    files = get_files(objects)
+    for key in files:
+        store_file(firmware_id, files[key])
 
 def load_pfs(firmware_id, data):
     pfs = PFSFile(data)
@@ -179,7 +203,7 @@ def load_pfs(firmware_id, data):
             print "Skipping GUID %s, object exists." % section_info["guid"]
             continue
 
-        section_id = hashlib.md5(section_info["content"]).hexdigest()
+        section_id = get_firmware_id(section_info["content"])
         section_info["object_id"] = section_id
         section_info["chunks"] = [base64.b64encode(chunk) for chunk in section_info["chunks"]]
 
@@ -189,11 +213,41 @@ def load_pfs(firmware_id, data):
         load_uefi_volumes(section_id, section_info["content"])
     pass
 
+def set_update(firmware_id, data, label_type, item_id= None):
+    ### Set the label for the item
+    if item_id is not None:
+        db.table("updates").filter({"item_id": item_id}).update({
+            "firmware_id": firmware_id,
+            "type": label_type
+        }).run()
+        print "Updating update %s to firmware ID: %s (%s)." % (item_id, firmware_id, label_type)
+
+    if not db.table("updates").filter({"firmware_id": firmware_id}).is_empty().run():
+        ### Add size of the firmware to the updates table
+        db.table("updates").filter({"firmware_id": firmware_id}).update({
+            "size": len(data)
+        }).run()
+        print "Updating size for firmware ID: %s (%s)." % (firmware_id, label_type)
+    pass
+
+def get_firmware_id(data):
+    return hashlib.md5(data).hexdigest()
+
+ITEM_TYPES = {
+    "capsule": "uefi_capsule",
+    "pfs": "dell_pfs",
+    "me": "intel_me",
+    "bios": "bios_rom",
+    "uefi": "firmware_volume"
+}
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--pfs", action="store_true", default=False, help="This is a DELL PFS update.")
     parser.add_argument("--bios", action="store_true", default=False, help="This is a BIOS ROM.")
     parser.add_argument("--me", action="store_true", default=False, help="This is an Intel ME container.")
+    parser.add_argument("--capsule", action= "store_true", default= False, help= "This is a UEFI firmware capsule.")
+    parser.add_argument("-i", "--item", default= None, help= "Set the update with this item_id to the firmware_id.")
     parser.add_argument("file", help="The file to work on")
 
     args = parser.parse_args()
@@ -204,20 +258,25 @@ if __name__ == "__main__":
         print "Error: Cannot read file (%s) (%s)." % (args.file, str(e))
         sys.exit(1)
 
-    firmware_id = hashlib.md5(input_data).hexdigest()
+    firmware_id = get_firmware_id(input_data)
     
     r.connect("localhost", 28015).repl()
     db = r.db("uefi")
 
-    if not db.table("updates").filter({"firmware_id": firmware_id}).is_empty().run():
-        ### Add size of the firmware to the updates table
-        db.table("updates").filter({"firmware_id": firmware_id}).update({
-            "size": len(input_data)
-        }).run()
+    label_type = "unknown"
+    if args.pfs: label_type = ITEM_TYPES["pfs"]
+    elif args.bios: label_type = ITEM_TYPES["bios"]
+    elif args.me: label_type = ITEM_TYPES["me"]
+    elif args.capsule: label_type = ITEM_TYPES["capsule"]
+    else: label_type = ITEM_TYPES["firmware_volume"]
+
+    set_update(firmware_id, input_data, label_type, item_id= args.item)
 
     if args.pfs:
         load_pfs(firmware_id, input_data)
-    elif args.pfs:
+    elif args.capsule:
+        load_capsule(firmware_id, input_data)
+    else:
         load_uefi_volumes(firmware_id, input_data)
 
 
