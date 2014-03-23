@@ -11,21 +11,29 @@ import rethinkdb as r
 from uefi_firmware import *
 from uefi_firmware.pfs import PFSFile
 
-def brute_search(data):
-    volumes = utils.search_firmware_volumes(data)
-    objects = []
+#def brute_search(data):
+#    volumes = utils.search_firmware_volumes(data)
+#    objects = []
+#
+#    for index in volumes:
+#        objects += parse_firmware_volume(data[index-40:], name=index)
+#    return objects
+#    pass
 
-    for index in volumes:
-        objects += parse_firmware_volume(data[index-40:], name=index)
-    return objects
-    pass
+#def parse_firmware_volume(data, name="volume"):
+#    firmware_volume = uefi.FirmwareVolume(data, name)
+#    firmware_volume.process()
+#
+#    objects = firmware_volume.iterate_objects(True)
+#    return objects
 
-def parse_firmware_volume(data, name="volume"):
-    firmware_volume = uefi.FirmwareVolume(data, name)
-    firmware_volume.process()
-
-    objects = firmware_volume.iterate_objects(True)
-    return objects
+#def load_uefi_volumes(firmware_id, data):
+#    objects = brute_search(data)
+#
+#    files = get_files(objects)
+#    for uefi_file in files:
+#        store_file(firmware_id, uefi_file)
+#    pass
 
 def get_file_name(_object):
     if len(_object["label"]) > 0:
@@ -54,20 +62,27 @@ def get_file_description(_object):
     return None 
 
 def get_files(objects):
-    files = {}
+    ### They may be duplicate file-GUIDs in a volume/capsule/etc.
+    #files = {}
+    files = []
     for _object in objects:
         if _object["type"] == "FirmwareFile":
-            files[_object["guid"]] = {
-                "name": get_file_name(_object), 
-                "description": get_file_description(_object),
-                "attrs": _object["attrs"],
+            #files[_object["guid"]] = {
+            files.append({
+                #"name": get_file_name(_object), 
+                #"description": get_file_description(_object),
+                "attrs": dict(_object["attrs"].items() + {
+                    "name": get_file_name(_object),
+                    "description": get_file_description(_object),
+                    }.items()
+                ),
                 "objects": _object["objects"],
                 "content": _object["content"],
                 "guid": _object["guid"]
-            }
+            })
         if "objects" in _object:
-            for key, value in get_files(_object["objects"]).iteritems():
-                files[key] = value
+            for uefi_file in get_files(_object["objects"]):
+                files.append(uefi_file)
     return files
 
 def _strings(_object, min=10):
@@ -104,24 +119,46 @@ def _load_pe(_object):
         pe_info["sections"][section.Name.replace("\x00", "") + "_md5"] = hashlib.md5(section.get_data(0)).hexdigest()
 
 def _object_entry(_object):
-    return {key: value for key, value in _object.iteritems() if key in ["guid", "type", "attrs", "object_id", "chunks", "other"]}
+    #return {key: value for key, value in _object.iteritems() if key in ["guid", "type", "attrs", "object_id", "chunks", "other"]}
+    entry = {k: v for k, v in _object.iteritems() if k in ["guid", "type", "attrs", "chunks", "other"]}
+    return entry
 
-def store_object(firmware_id, _object):
+def store_content(firmware_id, object_id, content, content_type= "object"):
+    if not content_table.get_all(object_id, index="object_id").is_empty().run():
+        '''If the content entry already exists for this object_id (hash), skip inserting content.'''
+        print "Skipping object content (%s) (%s), already exists." % (firmware_id, object_id)
+        return
+    content_table.insert({
+        "firmware_id": firmware_id,
+        "object_id": object_id,
+        "type": content_type,
+        "size": len(content),
+        "content": base64.b64encode(content)
+    }).run()
+
+def store_object(firmware_id, _object, object_type= "uefi_object"):
     if "_self" in _object:
         ### If this is an EFI object, it must be a basic object (section object)
         if isinstance(_object["_self"], uefi.FirmwareObject) and not isinstance(_object["_self"], uefi.EfiSection): 
             return None
 
     '''Store base objects only.'''
+    object_id = get_firmware_id(_object["content"])
     if "objects" not in _object or len(_object["objects"]) == 0:
         entry = _object_entry(_object)
         entry["firmware_id"] = firmware_id
-        entry["content"] = base64.b64encode(_object["content"])
-   
-        result = db.table("objects").insert(entry).run()
-        key = result["generated_keys"][0]
+        entry["object_id"] = object_id
 
-        return [key]
+        entry["size"] = len(_object["content"])
+        entry["type"] = object_type
+        #entry["content"] = base64.b64encode(_object["content"])
+
+        ### Store object content
+        store_content(firmware_id, object_id, _object["content"])
+   
+        ### Store this entry
+        keys = get_result_keys(objects_table.insert(entry).run())
+        return keys
 
     children = []
     for _sub_object in _object["objects"]:
@@ -130,61 +167,116 @@ def store_object(firmware_id, _object):
             children += key
     return children
 
-def store_file(firmware_id, file):
-    entry = _object_entry(file)
+def store_file(firmware_id, uefi_file):
+    entry = _object_entry(uefi_file)
 
-    if not db.table("files").get_all(firmware_id, index="firmware_id").filter({"guid": file["guid"]}).is_empty().run():
-        '''If the file already exists for this GUID/FirmwareID pair, skip.'''
-        print "Skipping file (%s) guid (%s), already exists." % (fimrware_id, file["guid"])
-        return
+    ### Used to store the file content
+    file_id = get_firmware_id(uefi_file["content"])
+    ### Do not store file content (yet), may be too much data
 
     children = []
-    for _object in file["objects"]:
+    for _object in uefi_file["objects"]:
         children += store_object(firmware_id, _object)
     #print children
 
     if len(children) == 0:
-        print "Storing a cloned child for (%s)." % file["guid"]
+        print "Storing a base UEFI file/object for GUID (%s)." % uefi_file["guid"]
         entry["no_children"] = True
-        children += store_object(firmware_id, file)
+        object_keys = store_object(firmware_id, uefi_file)
+        if object_keys is not None: 
+            children += object_keys
 
     entry["children"] = children
     entry["firmware_id"] = firmware_id
-    entry["content"] = base64.b64encode(file["content"])
-    entry["name"] = file["name"]
-    entry["description"] = file["description"]
+    entry["object_id"] = file_id
 
-    db.table("files").insert(entry).run()
-    print "Stored UEFI file (%s) %s." % (firmware_id, file["guid"])
+    entry["size"] = len(uefi_file["content"])
+    entry["type"] = "uefi_file"
 
-def load_uefi_volumes(firmware_id, data):
-    objects = brute_search(data)
+    ### Additional (and optional) UEFI file-only attributes
+    entry["attrs"] = uefi_file["attrs"]
+    #entry["attrs"]["name"] = uefi_file["name"]
+    #entry["attrs"]["description"] = uefi_file["description"]
 
+    keys = get_result_keys(objects_table.insert(entry).run())
+    print "Stored UEFI file (%s) %s." % (firmware_id, uefi_file["guid"])
+    return keys
+
+def load_uefi_volume(firmware_id, data, object_id= None):
+    object_id = firmware_id if object_id is None else object_id
+    firmware_volume = uefi.FirmwareVolume(data)
+    if not firmware_volume.valid_header:
+        print "This is not a valid UEFI firmware volume (%s)." % object_id
+        return None
+    if not firmware_volume.process():
+        print "The UEFI firmware volume (%s) did not parse correctly." % object_id
+        return None
+
+    if not objects_table.get_all(object_id, index="object_id").is_empty().run():
+        print "Firmware volume object (%s) exists." % object_id
+        return object_id
+
+    ### Store the files
+    objects = firmware_volume.iterate_objects(True)
     files = get_files(objects)
-    for key in files:
-        store_file(firmware_id, files[key])
+
+    ### Store the volume object information
+    child_ids = []
+    for uefi_file in files:
+        child_ids += store_file(object_id, uefi_file)    
+
+    objects_table.insert({
+        "firmware_id": firmware_id,
+        "object_id": object_id,
+        "children": child_ids,
+        ### Store size, type, attrs
+        "type": "uefi_volume",
+        "size": len(data)
+        ### Todo: store volume-specific attributes
+    }).run()
+
+    return object_id
+
     pass
 
-def load_capsule(firmware_id, data):
+def load_uefi_capsule(firmware_id, data, object_id= None):
+    object_id = firmware_id if object_id is None else object_id
     capsule = uefi.FirmwareCapsule(data)
     if not capsule.valid_header:
-        print "This is not a valid UEFI firmware capsule."
-        sys.exit(1)
-    
+        print "This is not a valid UEFI firmware capsule (%s)." % object_id
+        #sys.exit(1)
+        return None
     capsule.process()
-    ### Todo: insert Capsule information
+    #if not capsule.process():
+    #    return None
 
+    ### Create the parent object
+    if not objects_table.get_all(object_id, index="object_id").is_empty().run():
+        print "Firmware capsule object (%s) exists." % object_id
+        return object_id
+
+    ### Only handle capsule's filed with firmware volumes?
     volume = capsule.capsule_body
-    volume_info = volume.info(include_content= True)
-    if not db.table("objects").get_all(firmware_id, index="firmware_id").filter({"guid": volume_info["guid"]}).is_empty().run():
-        print "Skipping GUID %s, object exists." % volume_info["guid"]
-        return
-
-    volume_id = get_firmware_id(volume_info["content"])
     objects = volume.iterate_objects(True)
     files = get_files(objects)
-    for key in files:
-        store_file(firmware_id, files[key])
+
+    child_ids = []
+    for uefi_file in files:
+        child_ids += store_file(object_id, uefi_file)
+
+    objects_table.insert({
+        "firmware_id": firmware_id,
+        "object_id": object_id,
+        "children": child_ids,
+        ### Store size, type, attrs
+        "type": "uefi_capsule",
+        "size": len(data)
+        ### Todo: store capsule-specific attributes
+    }).run()
+
+    ### Not storing capsule content (yet), may be too much data.
+    return object_id
+    pass
 
 def load_pfs(firmware_id, data):
     pfs = PFSFile(data)
@@ -193,21 +285,46 @@ def load_pfs(firmware_id, data):
         sys.exit(1)
 
     pfs.process()
+
+    ### Store PFS info
+    if not objects_table.get_all(firmware_id, index="object_id").is_empty().run():
+        print "PFS object (%s) exists." % firmware_id
+        return
+
+    child_ids = []
     for section in pfs.objects:
         section_info = section.info(include_content= True)
 
-        if not db.table("objects").get_all(firmware_id, index="firmware_id").filter({"guid": section_info["guid"]}).is_empty().run():
-            print "Skipping GUID %s, object exists." % section_info["guid"]
+        if not objects_table.get_all(firmware_id, index="firmware_id").filter({"guid": section_info["guid"]}).is_empty().run():
+            print "Skipping PFS (%s) GUID %s, object exists." % (firmware_id, section_info["guid"])
             continue
 
         section_id = get_firmware_id(section_info["content"])
         section_info["object_id"] = section_id
-        section_info["chunks"] = [base64.b64encode(chunk) for chunk in section_info["chunks"]]
+        #section_info["chunks"] = [base64.b64encode(chunk) for chunk in section_info["chunks"]]
 
-        store_object(firmware_id, section_info)
-        print "Stored PFS object (%s) %s." % (firmware_id, section_info["guid"])
+        for chunk in section_info["chunks"]:
+            store_content(firmware_id, section_id, chunk, content_type= "pfs_chunk")
 
-        load_uefi_volumes(section_id, section_info["content"])
+        object_keys = load_uefi_volume(firmware_id, section_info["content"], object_id= section_id)
+        if object_keys is None:
+            ### This section is not a UEFI-volume.
+            object_keys = store_object(firmware_id, section_info, object_type= "pfs_section")
+        if object_keys is not None:
+            child_ids += object_keys
+
+        print "Stored PFS section (%s) GUID %s." % (firmware_id, section_info["guid"])
+        #load_uefi_volumes(section_id, section_info["content"])
+
+    objects_table.insert({
+        "firmware_id": firmware_id,
+        "object_id": firmware_id,
+        "children": child_ids,
+        ### Store size, type, attrs
+        "type": "dell_pfs",
+        "size": len(data)
+        ### Todo: store capsule-specific attributes
+    }).run()
     pass
 
 def set_update(firmware_id, data, label_type, item_id= None):
@@ -230,12 +347,15 @@ def set_update(firmware_id, data, label_type, item_id= None):
 def get_firmware_id(data):
     return hashlib.md5(data).hexdigest()
 
+def get_result_keys(insert_object):
+    return insert_object["generated_keys"]
+
 ITEM_TYPES = {
     "capsule": "uefi_capsule",
     "pfs": "dell_pfs",
     "me": "intel_me",
     "bios": "bios_rom",
-    "uefi": "firmware_volume"
+    "volume": "uefi_volume"
 }
 
 if __name__ == "__main__":
@@ -259,22 +379,25 @@ if __name__ == "__main__":
     
     r.connect("localhost", 28015).repl()
     db = r.db("uefi")
+    objects_table = db.table("objects")
+    updates_table = db.table("updates")
+    content_table = db.table("content")
 
     label_type = "unknown"
     if args.pfs: label_type = ITEM_TYPES["pfs"]
     elif args.bios: label_type = ITEM_TYPES["bios"]
     elif args.me: label_type = ITEM_TYPES["me"]
     elif args.capsule: label_type = ITEM_TYPES["capsule"]
-    else: label_type = ITEM_TYPES["firmware_volume"]
+    else: label_type = ITEM_TYPES["volume"]
 
     set_update(firmware_id, input_data, label_type, item_id= args.item)
 
     if args.pfs:
         load_pfs(firmware_id, input_data)
     elif args.capsule:
-        load_capsule(firmware_id, input_data)
+        load_uefi_capsule(firmware_id, input_data)
     else:
-        load_uefi_volumes(firmware_id, input_data)
+        load_uefi_volume(firmware_id, input_data)
 
 
 
