@@ -1,7 +1,7 @@
 - content_for :title do
   Explorer - Firmware Objects
 
-.none
+%h3
   Firmware ID: 
   = @firmware_id
 
@@ -9,36 +9,67 @@
   %table.table.table-bordered.table-striped.table-hover
     %thead
       %tr
-        %th GUID
+        %th ObjectID
         %th Info
         %th Size
         %th Stats
         %th Actions
     %tbody
+      %tr
+        %td 
+          %div
+            #{@firmware_id}
+          %small
+            #{@firmware_object["vendor"]}
+            (#{@firmware_object["type"]})
+        %td
+          - if @firmware_object.has_key?("description")
+            .none= @firmware_object["description"]
+          - if @firmware_object.has_key?("load_meta")
+            %small (#{@firmware_object["load_meta"]["magic"]})
+          -# obj["objects"].each do |sub_obj|
+        %td #{@firmware_object["size"]} 
+        %td 
+          - if @firmware_object.has_key? ("stats")
+            - @firmware_object["stats"].each do |key, value|
+              %b= key
+              %small= value
+              - if key == "Changed"
+                %br
+        %td 
+      %tr
+        %th{ :colspan => "6" }
+          Children
       - @objects.each do |obj|
         %tr
           %td 
             %div
-              #{obj["guid"]}
-              %small
-                (
-                %a{ :href => "/explorer/uefi/#{obj["object_id"]}"}>="uefi"
-                )
-                (
-                %a{ :href => "/explorer/raw/#{@firmware_id}/#{obj["id"]}"}>="raw"
-                )
-
-            %small (#{obj["attrs"]["type"]})
+              - if obj.has_key?("guid")
+                #{obj["guid"]}
+              - else
+                #{obj["object_id"]}
+            %small
+              #{obj["vendor"]}
+              (#{obj["type"]})
           %td
-            - if obj.has_key?("description")
-              .none= obj["description"]
+            - if obj["attrs"].has_key?("name")
+              .none= obj["attrs"]["name"]
+            - if obj["attrs"].has_key?("description")
+              .none= obj["attrs"]["description"]
+            - if obj.has_key?("info")
+              - obj["info"].each do |key, value|
+                %b= key
+                %small= value
             - if obj.has_key?("load_meta")
-              %small (#{obj["load_meta"]["magic"]})
+              %div
+                %small (#{obj["load_meta"]["magic"]})
             -# obj["objects"].each do |sub_obj|
-          %td #{obj["attrs"]["size"]} 
+          %td #{obj["size"]} 
           %td 
             - if obj.has_key? ("stats")
               - obj["stats"].each do |key, value|
                 %b= key
                 %small= value
+                - if key == "Changed"
+                  %br
           %td 

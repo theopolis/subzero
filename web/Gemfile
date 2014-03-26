@@ -24,5 +24,7 @@ group :development do
   gem 'rails_layout'
 end
 
+gem 'will_paginate-bootstrap'
+
 gem 'rethinkdb'
 gem 'puma', '2.2.0'

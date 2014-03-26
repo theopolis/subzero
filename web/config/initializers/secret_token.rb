@@ -9,4 +9,4 @@
 
 # Make sure your secret_key_base is kept private
 # if you're sharing your code publicly.
-RailsBootstrap::Application.config.secret_key_base = '0413dc0006c6bec2e1b811e4c293bbad60db6230de65df9f46784ba2142653a487a52b70f50118b417aa18447a3f37dbcfc6db8be3c7e2de9e650c509e175c2b'
+RailsBootstrap::Application.config.secret_key_base = 'CHANGEME_NOT_USED'

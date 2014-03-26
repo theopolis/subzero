@@ -8,14 +8,18 @@ class ExplorerController < ApplicationController
 
   def explorer
     ### There is nothing on this page for now
+
   end
 
   def products
+    @per_page = 30
+    @page_num = if params.has_key?(:page) then params[:page].to_i-1 else 0 end
     @products = {}
     ### Iterate the updates and count the number per machine
     updates = r.db("uefi").table("updates").
-      pluck("version", "products", "date", "vendor", "item_id", "attrs", "name", "firmware_id", "size").
-      order_by(r.asc(lambda {|doc| doc[:date]})).run
+      order_by(:index => r.desc(:date)).
+      pluck("version", "products", "date", "vendor", "item_id", 
+        "attrs", "name", "firmware_id", "size", "load_change").run
     updates.each do |doc|
       doc["products"].each do |product|
         unless @products.has_key?(product)
@@ -30,37 +34,16 @@ class ExplorerController < ApplicationController
           :item_id => doc["item_id"],
           :firmware_id => doc["firmware_id"],
           :size => doc["size"],
-          :status => doc["attrs"]["status"]
+          :status => doc["attrs"]["status"],
+          :load_change => if doc.has_key?("load_change") then doc["load_change"] else {} end
         })
       end
     end
+    
+    @products_keys = @products.keys.paginate(:page => params[:page], :per_page => @per_page)
+
     ### Leave counting/stats up to the viewer.
-  end
 
-  # GET /explorer
-  def explorer_old
-  	@firmware = {}
-
-  	updates = r.db("uefi").table("updates").
-      order_by(r.asc(lambda {|doc| doc[:version]})).run
-  	updates.each do |doc|
-      if doc.has_key? ("load_change")
-        #p (doc["load_change"]["change_score"]/doc["size"])*100
-        doc["stats"] = {
-          "Changed" => "#{doc["load_change"]["change_score"]} bytes, %.2f%" % [percent_change(doc)]
-        }
-        if doc["load_change"].has_key? ("new_files")
-          doc["stats"]["Added Files"] = "%d, %d bytes" % [doc["load_change"]["new_files"].length, doc["load_change"]["new_files_score"]]
-        end
-      end
-
-      ### Organize firmware updates by machine
-      unless @firmware.has_key?(doc["machine"])
-        @firmware[doc["machine"]] = []
-      end
-
-  	  @firmware[doc["machine"]].push(doc)
-  	end
   end
 
   def download
@@ -71,8 +54,8 @@ class ExplorerController < ApplicationController
       return
     end
 
-    send_data Base64.decode64(object["content"]), :filename => "%s-%s.obj" % [object["firmware_id"], object["guid"]]
-
+    send_data Base64.decode64(object["content"]), 
+      :filename => "%s-%s.obj" % [object["firmware_id"], object["guid"]]
   end
 
   def raw
@@ -80,9 +63,9 @@ class ExplorerController < ApplicationController
     @id = params[:id]    
 
     ### Get Information about object
-    cursor = r.db("uefi").table("objects").filter{|obj| 
-        (obj["firmware_id"].eq(@firmware_id)) & (obj["id"].eq(@id))
-      }.pluck("name", "guid", "description", "attrs", "load_change", "size", "id", "load_meta").limit(1).run
+    cursor = r.db("uefi").table("objects").get_all(@firmware_id, :index => "firmware_id").
+      filter{|obj| obj["id"].eq(@id)}.
+      pluck("name", "guid", "description", "attrs", "load_change", "size", "id", "load_meta").limit(1).run
 
     ### Silly construct
     cursor.each{ |obj| @object = obj }
@@ -94,9 +77,9 @@ class ExplorerController < ApplicationController
     @guid = params[:id]
 
     ### Get Information about File
-    cursor = r.db("uefi").table("files").filter{|file| 
-        (file["firmware_id"].eq(@firmware_id)) & (file["guid"].eq(@guid))
-      }.pluck("name", "guid", "description", "attrs", "load_change", "size").limit(1).run
+    cursor = r.db("uefi").table("objects").get_all(@firmware_id, :index => "firmware_id").
+      filter{|file|  file["guid"].eq(@guid) }.
+      pluck("name", "guid", "description", "attrs", "load_change", "size").limit(1).run
 
     ### Silly construct
     cursor.each{ |file| @file = file }
@@ -128,35 +111,30 @@ class ExplorerController < ApplicationController
   end
 
   def firmware
-    @firmware_id = params[:id]
+    @object_id = params[:id]
+    @firmware_id = "None"
+    @firmware_object = {}
     @objects = []
 
-    ### Section firmware type
-    @firmware_type = ""
-    cursor = r.db("uefi").table("updates").filter{|obj| obj["firmware_id"].eq(@firmware_id)}.
-      pluck("type").run
+    ### Get the base firmware object
+    cursor = r.db("uefi").table("objects").get_all(@object_id, :index => "object_id").
+      pluck("firmware_id", "attrs", "size", "type", "children", "vendor", "guid", "load_meta", "load_change").
+      order_by(r.desc(lambda {|doc| doc[:size]})).limit(1).run
+
     cursor.each do |obj|
-      @firmware_type = obj["type"]
-      break
+      @firmware_id = obj["firmware_id"]
+      @firmware_object = get_object_info(obj)
     end
 
-    cursor = r.db("uefi").table("objects").filter{|obj| obj["firmware_id"].eq(@firmware_id)}.
-      pluck("attrs", "guid", "object_id", "id", "load_meta", "load_change").
-      order_by(r.desc(lambda {|doc| doc[:attrs][:size]})).run
+    ### Get the children objects
+    #puts @firmware_object["children"]
+    cursor = r.db("uefi").table("objects").get_all(*@firmware_object["children"]).
+      pluck("object_id", "attrs", "size", "type", "children", "vendor", "guid", "load_meta", "load_change").
+      order_by(r.desc(lambda {|doc| doc[:size]})).run
+
 
     cursor.each do |obj|
-      ### Todo: handle each type of firmware, populate obj["objects"]
-      obj["objects"] = []
-      add_lookups!(obj)
-      add_object_stats!(obj, attrs = false, meta = false)
-
-      ### This is a different type of stats
-      objects_count = r.db("uefi").table("objects").count{|_obj| _obj["firmware_id"].eq(obj["object_id"])}.run
-      files_count = r.db("uefi").table("files").count{|_obj| _obj["firmware_id"].eq(obj["object_id"])}.run
-      if objects_count > 0 then obj["stats"]["Objects"] = objects_count end
-      if files_count > 0 then obj["stats"]["UEFI Files"] = files_count end
-
-      @objects.push(obj)
+      @objects.push(get_object_info(obj))
     end
 
   end
@@ -228,7 +206,7 @@ private
 
     if obj.has_key? ("load_change")
       if obj["load_change"].has_key? ("change_score") and obj["load_change"]["change_score"] > 0
-        obj["stats"]["Changed"] = "%d bytes, %.2f%" % [obj["load_change"]["change_score"], percent_change(obj)]
+        obj["stats"]["Changed"] = "%d bytes, %.2f%%" % [obj["load_change"]["change_score"], percent_change(obj)]
       end
       if obj["load_change"].has_key? ("new_file")
         obj["stats"]["New File"] = true
@@ -244,6 +222,32 @@ private
         _obj[key] = "*%s" % value
       end
     end
+  end
+
+  def get_object_info(_obj)
+    ### Requires: firmware_id, children, attrs
+    #@firmware_id = obj["firmware_id"]
+    add_lookups!(_obj)
+    add_object_stats!(_obj, attrs = false, meta = false)
+
+    ### This is a different type of stats
+    objects_count = _obj["children"].length
+    unless _obj.has_key?("attrs")
+      _obj["attrs"] = {}
+    end
+    if _obj["type"] == "uefi_file"
+      _obj["info"] = {
+        #"Attrs" => _obj["attrs"]["attributes"],
+        "FileType" => _obj["attrs"]["type_name"],
+      }
+      _obj["stats"]["Shared"] = r.db("uefi").table("objects").get_all(_obj["guid"], :index => "guid").count.run
+      _obj["stats"]["Matches"] = r.db("uefi").table("objects").get_all(_obj["object_id"], :index => "object_id").count.run
+
+    end
+
+    #if objects_count > 0 then _obj["stats"]["Objects"] = objects_count end
+    #@objects.push(_obj)
+    return _obj
   end
 
 end

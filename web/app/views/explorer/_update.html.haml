@@ -1,0 +1,22 @@
+
+%tr
+  %td #{firmware[:version]}
+  %td #{firmware[:name]}
+  %td #{firmware[:size]}
+  %td 
+    = Time.at(firmware[:date])
+    - if last_update != 0
+      %small 
+        = (firmware[:date] - last_update)/(60*60)
+        hours
+  %td
+    - if firmware.has_key? (:stats)
+      - firmware[:stats].each do |key, value|
+        %b= key
+        %small= value
+    - else
+      None
+  %td
+    %a{:href => "/explorer/firmware/#{firmware[:firmware_id]}"}
+      #{firmware[:firmware_id]}
+  %td= firmware[:status]
