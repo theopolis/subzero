@@ -182,9 +182,10 @@ def store_file(firmware_id, uefi_file):
     if len(children) == 0:
         print "Storing a base UEFI file/object for GUID (%s)." % uefi_file["guid"]
         entry["no_children"] = True
-        object_keys = store_object(firmware_id, uefi_file)
-        if object_keys is not None: 
-            children += object_keys
+        store_content(firmware_id, file_id, uefi_file["content"])
+        #if object_keys is not None: 
+        #children += object_keys
+        #return object_keys
 
     entry["children"] = children
     entry["firmware_id"] = firmware_id

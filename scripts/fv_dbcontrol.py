@@ -30,24 +30,6 @@ def _object_compare(obj1, obj2):
             change_score += 1 
     return change_score   
 
-def _file_compare(db, file1, file2):
-    md5_1 = hashlib.md5(file1["content"]).hexdigest()
-    md5_2 = hashlib.md5(file2["content"]).hexdigest()
-    
-    if md5_1 == md5_2: return 0
-
-    objects1 = db.table("objects").filter({"guid": file1["guid"], "firmware_id": file1["firmware_id"]}).order_by(r.row["attrs"]["size"]).run()
-    objects1 = [obj for obj in objects1]
-    objects2 = db.table("objects").filter({"guid": file2["guid"], "firmware_id": file2["firmware_id"]}).order_by(r.row["attrs"]["size"]).run()
-    objects2 = [obj for obj in objects2]
-
-    change_score = 0
-    for i in xrange(len(objects1)):
-        change_score += _object_compare(objects1[i]["content"], objects2[i]["content"])
-
-    return change_score
-    pass
-
 class Controller(object):
 
     def command_list_fv(self, db, args):
@@ -64,146 +46,117 @@ class Controller(object):
         for _file in files: print "%s %s %s (%s)" % (_file["guid"], _file["attrs"]["size"], _file["name"], _file["description"])
         pass
 
-    def _compare_fv(self, db, fvid1, fvid2, save= False):
-        files1 = db.table("files").filter({"firmware_id": fvid1}).run()
-        files2 = db.table("files").filter({"firmware_id": fvid2}).run()
-
-        files_list1 = {_file["guid"]: _file for _file in files1}
-        files_list2 = {_file["guid"]: _file for _file in files2}
-
-        if len(files_list1) == 0 or len(files_list2) == 0:
-            print "Cannot compare volumes (%s -> %s) without loaded firmware." % (fvid1, fvid2)
-            return 0
-
+    def _compare_children(self, db, list1, list2, save= False):
         change_score = 0
-        new_files = []
-        new_files_score = 0
-        for guid, _file in files_list1.iteritems():
-            if guid not in files_list2:
-                print "%s (%s) not in %s" % (guid, _file["name"], fvid1)
-                change_score += files_list1[guid]["attrs"]["size"]
-                pass
-        for guid, _file in files_list2.iteritems():
-            if guid not in files_list1:
-                print "%s (%s) not in %s" % (guid, _file["name"], fvid2)
-                change_score += files_list2[guid]["attrs"]["size"]
-                new_files.append(guid)
-                new_files_score += files_list2[guid]["attrs"]["size"]
+        added_objects = []
+        added_objects_score = 0
 
-                if save:
-                    db.table("files").filter({"firmware_id": fvid2, "guid": guid}).update(
-                        {"load_change": {"new_file": True}}
-                    ).run()
-                    print "New file (%s) %s." % (fvid2, guid)
-                pass
+        ### Assemble GUID pairs
+        children1 = {}
+        children2 = {}
+        child_cursor = db.table("objects").get_all(*(list1 + list2)).pluck("id", "size", "object_id", "guid", "children").run()
 
-        for guid, _file in files_list1.iteritems():
-            if guid not in files_list2: continue
-            score = _file_compare(db, _file, files_list2[guid])
-            if score == 0: continue
+        for i, child in enumerate(child_cursor):
+            if "guid" not in child:
+                child["guid"] = i
+            if child["id"] in list1:
+                if child["guid"] not in children1: children1[child["guid"]] = []
+                children1[child["guid"]].append(child)
+            else: 
+                if child["guid"] not in children2: children2[child["guid"]] = []
+                children2[child["guid"]].append(child)
 
-            db.table("files").filter({"firmware_id": fvid2, "guid": guid}).update(
-                {"load_change": {"change_score": score}
-            }).run()
-            print "Loaded change for file (%s) %s of %d." % (fvid2, guid, score)
+        objects1 = []
+        objects2 = []
+        for guid in children2.keys():
+            if guid not in children1:
+                ### This guid/object was added in the update
+                added_objects += [c["object_id"] for c in children2[guid]]
+                added_objects_score += sum([int(c["size"]) for c in children2[guid]])
+                ### Todo: this does not account for nested children in a new update
+                continue
+            for i in xrange(len(children2[guid])):
+                if "children" in children2[guid][i] and len(children2[guid][i]["children"]) > 0:
+                    ### There are nested children, compare them individually.
+                    #print "comparing children"
+                    nested_change = self._compare_children(db, children1[guid][i]["children"], children2[guid][i]["children"], save= save)
+                    #print "finished"
+                    change_score += nested_change[0]
+                    added_objects += nested_change[1]
+                    added_objects_score += nested_change[2]
 
-            change_score += score
+                    if save:
+                        #print children2[guid][i]["id"]
+                        db.table("objects").get(children2[guid][i]["id"]).update({
+                            "load_change": {
+                                "change_score": nested_change[0],
+                                "new_files": nested_change[1],
+                                "new_files_score": nested_change[2]
+                            }
+                        }).run()
 
-        return {"change_score": change_score, "new_files": new_files, "new_files_score": new_files_score}
+                    continue
+                #if children1[guid][i]["object_id"] == children2[guid][i]["object_id"]:
+                #    continue
+                objects1.append(children1[guid][i]["object_id"])
+                objects2.append(children2[guid][i]["object_id"])
+
+        ### If there are objects, compare the content
+        content1 = []
+        content2 = []
+        content_cursor = db.table("content").get_all(*(objects1 + objects2), 
+            index= "object_id").order_by("size").pluck("object_id", "content", "size").run()
+        
+        for content in content_cursor:
+            if content["object_id"] in objects1: 
+                content1.append(content)
+            if content["object_id"] in objects2:
+                content2.append(content)
+
+        for i in xrange(len(content2)):
+            change = _object_compare(content1[i]["content"], content2[i]["content"])
+            #print content1[i]["size"], content2[i]["size"], change
+            change_score += change
+
+        #print guid, change_score, len(added_objects)
+        return (change_score, added_objects, added_objects_score)
         pass
 
     def _compare_firmware(self, db, firmware1, firmware2, save= False):
         ### Query firmware objects
         if len(firmware1[2]) == 0 or len(firmware2[2]) == 0:
-            print "Cannot compare versions (%d -> %d) without loaded firmware." % (firmware1[0], firmware2[0])
+            print "Cannot compare versions (%d -> %d) without loaded firmware objects." % (firmware1[0], firmware2[0])
             return 
 
-        firmware_change_score = 0
-        firmware_added_objects = []
-        firmware_added_objects_score = 0
+        ### This could be bad without guided-objects
         if len(firmware1[2]) != len(firmware2[2]):
-            print "Firmware object count has changed between versions (%d -> %d)." % (firmware1[0], firmware2[0])
+            print "Firmware object count has changed between versions (%s -> %s)." % (firmware1[0], firmware2[0])
 
-        firmware_change_score = 0
-        for guid in firmware2[2].keys():
-            object_change_score = 0
-            if guid in firmware1[2] and firmware1[2][guid] == firmware2[2][guid]:
-                ### Objects are indexed by their hash
-                continue
-
-            ### Check if this is a new object
-            if guid not in firmware2[2]:
-                firmware_added_objects += 1
-
-                object1 = db.table("objects").filter({"object_id": firmware2[2][guid]}).pluck("content").run()
-                object1 = [_obj["content"] for _obj in object1][0]
-                firmware_added_objects.append((firmware1[2][guid], ""))
-                firmware_added_objects_score += object1["attrs"]["size"]
-                object_change_score = object1["attrs"]["size"]
-
-            ### Apply some check if to determine if the object was a set of firmware volumes
-            elif not db.table("files").filter({"firmware_id": firmware1[2][guid]}).is_empty().run():
-                #print "Would compare FV for %s." % guid
-                #continue
-                changes = self._compare_fv(db, firmware1[2][guid], firmware2[2][guid], True)
-                db.table("objects").filter({"object_id": firmware2[2][guid]}).update({
-                    "load_change": changes
-                }).run()
-
-                if "new_files" in changes:
-                    firmware_added_objects += [(firmware1[2][guid], _file) for _file in changes["new_files"]]
-                    firmware_added_objects_score += changes["new_files_score"]
-                object_change_score = changes["change_score"]
-            ### Apple some check to determine if ME
-
-            ### Compare objects directly
-            else:
-                object1 = db.table("objects").filter({"object_id": firmware1[2][guid]}).pluck("content").run()
-                object1 = [_obj["content"] for _obj in object1][0]
-
-                object2 = db.table("objects").filter({"object_id": firmware2[2][guid]}).pluck("content").run()
-                object2 = [_obj["content"] for _obj in object2][0]
-
-                object_change_score = _object_compare(object1, object2)
-                db.table("objects").filter({"object_id": firmware2[2][guid]}).update({
-                    "load_change": {"change_score": object_change_score}
-                }).run()
-
-            firmware_change_score += object_change_score
-            print "Object %s change: %d." % (guid, object_change_score)
+        change = self._compare_children(db, firmware1[2], firmware2[2], save= True)
 
         ### Save changes to update
-        db.table("updates").filter({"firmware_id": firmware2[1]}).update({
-            "load_change": {
-                "change_score": firmware_change_score,
-                "new_files": firmware_added_objects,
-                "new_files_score": firmware_added_objects_score
-            }
-        }).run()
-        print "Firmware %s change: %d" % (firmware2[1], firmware_change_score)
+        if save:
+            db.table("updates").get_all(firmware2[1], index= "firmware_id").update({
+                "load_change": {
+                    "change_score": change[0],
+                    "new_files": change[1],
+                    "new_files_score": change[2]
+                }
+            }).run()
+            db.table("objects").get_all(firmware2[1], index= "object_id").update({
+                "load_change": {
+                    "change_score": change[0],
+                    "new_files": change[1],
+                    "new_files_score": change[2]
+                }
+            }).run()
+        print "Firmware %s change: %s" % (firmware2[1], str(change))
         pass
-
-    def command_load_change(self, db, args):
-        updates = db.table("updates").filter({"machine": args.machine}).order_by("version").\
-            pluck("version", "firmware_id", "type", "load_change").run()
-        firmware_objects = []
-
-        for update in updates:
-            objects = db.table("objects").filter({"firmware_id": update["firmware_id"]}).\
-            pluck("object_id", "guid").run()
-            objects = {_obj["guid"]:_obj["object_id"] for _obj in objects}
-            firmware_objects.append((update["version"], update["firmware_id"], objects, "load_change" in update))
-
-        for i in xrange(len(firmware_objects)-1):
-            if not args.force and firmware_objects[i+1][3]:
-                print "Skipping change comparison (%d -> %d), already completed." % (firmware_objects[i][0], firmware_objects[i+1][0])
-                continue
-            self._compare_firmware(db, firmware_objects[i], firmware_objects[i+1], True)
 
     def _load_meta(self, db, _object):
         content = base64.b64decode(_object["content"])
         #print _object["firmware_id"]
-        db.table("objects").filter({"id": _object["id"]}).update({
+        db.table("objects").get(_object["id"]).update({
             "load_meta": {
                 "magic":  magic.from_buffer(content),
                 "ssdeep": pydeep.hash_buf(content),
@@ -215,88 +168,48 @@ class Controller(object):
         print "Loaded meta for object (%s) %s." % (_object["firmware_id"], _object["id"])
         pass
 
-    def command_load_meta(self, db, args):
-        def load_objects(firmware_id):
-            objects = db.table("objects").filter({"firmware_id": firmware_id})\
-                .pluck("firmware_id", "id", "object_id", "content", "load_meta").run()
-            for _object in objects:
-                if not args.force and "load_meta" in _object:
-                    print "Skipping parsing of (%s) (%s), already completed." % (firmware_id, _object["id"])
-                    continue
-                self._load_meta(db, _object)
-                if "object_id" in _object.keys():
-                    load_objects(_object["object_id"])
-            
-        fobjects = db.table("updates").filter({"machine": args.machine}).order_by("version").\
-            pluck("version", "firmware_id", "load_meta").run()
-        for _object in fobjects:
-            if not args.force and "load_meta" in _object:
-                print "Skipping parsing of (%s), already completed." % _object["firmware_id"]
+    def _load_children(self, db, children):
+        child_objects = db.table("objects").get_all(*children).pluck("id", "object_id", "load_meta", "children").run()
+        for child in child_objects:
+            if "children" in child and len(child["children"]) > 0:
+                #for child_key in child_object["children"]:
+                self._load_children(db, child["children"])
                 continue
-            load_objects(_object["firmware_id"])
 
-    def _dump_pe(self, _object):
-        def _get_pes(_object):
-            pes = []
-            if "objects" in _object.keys():
-                for _obj in _object["objects"]: pes += _get_pes(_obj)
-            #print _object["type_name"]
-            if "attrs" in _object.keys() and _object["attrs"]["type"] in [16]:
-                pes.append(_object["content"])
-            return pes
-            pass
-
-        pes = _get_pes(_object)
-        for i, _pe in enumerate(pes):
-            _dump_data("%s-%s.pe32" % (_object["guid"], _object["name"]), base64.b64decode(_pe))
+            contents = db.table("content").get_all(child["object_id"], index= "object_id").run()
+            for content in contents:
+                self._load_meta(db, content)
+                break
         pass
 
-    def command_dump_pe(self, db, args):
-        files = db.table("uefi_files").filter({"firmware_id": args.fv_id, "guid": args.guid}).limit(1).run()
-
-        for _file in files:
-            _object = _file
-            break
-
-        self._dump_pe(_object)
-    pass
-
-    def command_dump_pes(self, db, args):
-        files = db.table("uefi_files").filter({"firmware_id": args.fv_id}).run()
-        for _file in files:
-            self._dump_pe(_file)
-
-    def _dump_objects(self, name, _object):
-        if "attrs" in _object and "type_name" in _object["attrs"]:
-            name = "%s-%s" % (name, _object["attrs"]["type_name"])
-        _dump_data("%s.obj" % name, base64.b64decode(_object["content"]))
-
-
-    def command_dump_file(self, db, args):
-        files = db.table("files").filter({"firmware_id": args.fv_id, "guid": args.guid}).limit(1).run()
-        children = db.table("objects").filter({"firmware_id": args.fv_id, "guid": args.guid}).run()
-        for _object in children:
-            self._dump_objects(args.guid, _object)
-
-    def command_dump_files(self, db, args):
-        files = db.table("files").filter({"guid": args.guid}).run()
-        files = {_file["firmware_id"]: _file for _file in files}
-
-        if args.machine:
-            fvs = db.table("updates").filter({"machine": args.machine}).pluck("version", "firmware_id").run()
-            for _fv in fvs:
-                self._dump_objects("%d-%s" % (_fv["version"], args.guid), files[_fv["firmware_id"]])
-        else:
-            for _file in files:
-                self._dump_objects("%s-%s" % (_file["firmware_id"], args.guid), _file)
+    def _get_product_updates(self, db, product):
+        updates = db.table("updates").order_by("date").filter(lambda update:
+                update["products"].contains(product)
+            ).map(r.row.merge({ "object_id": r.row["firmware_id"] })).eq_join("object_id", 
+                db.table("objects"), index= "object_id"
+            ).zip().run()
+        return updates
         pass
 
-    def command_dump_others(self, db, args):
-        files = db.table("files").filter({"firmware_id": args.fv_id}).run()
-        for _file in files:
-            if _file["attrs"]["type"] not in [2, 1]: continue
-            self._dump_objects(_file["guid"], _file)
-        pass
+    def command_load_meta(self, db, args):
+        updates = self._get_product_updates(db, args.product)
+        for update in updates:
+            if "children" not in update or len(update["children"]) == 0:
+                continue
+            self._load_children(db, update["children"])
+
+    def command_load_change(self, db, args):
+        updates = self._get_product_updates(db, args.product)
+        firmware_objects = []
+
+        for update in updates:
+            firmware_objects.append((update["version"], update["firmware_id"], update["children"], "load_change" in update))
+
+        for i in xrange(len(firmware_objects)-1):
+            if not args.force and firmware_objects[i+1][3]:
+                print "Skipping change comparison (%s -> %s), already completed." % (firmware_objects[i][0], firmware_objects[i+1][0])
+                continue
+            self._compare_firmware(db, firmware_objects[i], firmware_objects[i+1], True)
 
     def command_add_lookup(self, db, args):
         if db.table("files").filter({"guid": args.guid}).is_empty().run():
@@ -315,7 +228,6 @@ class Controller(object):
             print "Updated lookup for GUID (%s), set (%s) = (%s)." % (args.guid, args.name, args.value)
         pass
 
-
 def parse_extra (parser, namespace):
     namespaces = []
     extra = namespace.extra
@@ -329,38 +241,20 @@ def parse_extra (parser, namespace):
 def main():
 
     argparser = argparse.ArgumentParser()
-    subparsers = argparser.add_subparsers(help='FV Controls', dest='command')
+    subparsers = argparser.add_subparsers(help='Firmware Controls', dest='command')
 
     parser_list_fv = subparsers.add_parser("list_fv", help= "List all FV IDs which have files in the DB")
 
     parser_list_files = subparsers.add_parser("list_files", help= "List all files GUIDs for a given FV ID")
     parser_list_files.add_argument("fv_id",  help="Firmware ID.")
 
-    #parser_dump_pe = subparsers.add_parser("dump_pe", help= "Write PE object if it exists.")
-    #parser_dump_pe.add_argument("fv_id", help="Firmware ID.")
-    #parser_dump_pe.add_argument("guid", help="File GUID.")
-
-    #parser_dump_pes = subparsers.add_parser("dump_pes", help= "Write all PEs from a given firmware ID.")
-    #parser_dump_pes.add_argument("fv_id", help="Firmware ID.")
-
-    parser_dump_file = subparsers.add_parser("dump_file", help= "Write file objects.")
-    parser_dump_file.add_argument("fv_id", help="Firmware ID.")
-    parser_dump_file.add_argument("guid", help="File GUID.")
-
-    parser_dump_files = subparsers.add_parser("dump_files", help= "Write a file from every fv")
-    parser_dump_files.add_argument("--machine", help="Limit files to a specific machine")
-    parser_dump_files.add_argument("guid", help="File to dump")
-
-    parser_dump_others = subparsers.add_parser("dump_others", help= "Dump files that are not drivers/PEs")
-    parser_dump_others.add_argument("fv_id", help="Firmware ID.")
-
     '''Simple loading/parsing commands.'''
-    parser_load_change = subparsers.add_parser("load_change", help= "Load change scores for files and firmware.")
-    parser_load_change.add_argument("machine", help="Machine name to load.")
+    parser_load_change = subparsers.add_parser("load_change", help= "Load change scores for objects and firmware.")
+    parser_load_change.add_argument("product", help="Product to load.")
     parser_load_change.add_argument("-f", "--force", action="store_true", default= False, help="Force recalculation.")
 
     parser_load_meta = subparsers.add_parser("load_meta", help= "Extract meta, hashes for a machine's firmware.")
-    parser_load_meta.add_argument("machine", help= "Machien name to load.")
+    parser_load_meta.add_argument("product", help= "Product to load.")
     parser_load_meta.add_argument("-f", "--force", action="store_true", default= False, help="Force recalculation.")
 
     parser_add_lookup = subparsers.add_parser("add_lookup", help= "Add metadata about a file GUID.")
