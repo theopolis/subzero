@@ -79,11 +79,17 @@ class Controller(object):
                 if "children" in children2[guid][i] and len(children2[guid][i]["children"]) > 0:
                     ### There are nested children, compare them individually.
                     #print "comparing children"
-                    nested_change = self._compare_children(db, children1[guid][i]["children"], children2[guid][i]["children"], save= save)
-                    #print "finished"
-                    change_score += nested_change[0]
-                    added_objects += nested_change[1]
-                    added_objects_score += nested_change[2]
+                    if len(children1[guid]) <= i:
+                        child_ids = db.table("objects").get_all(*children2[guid][i]["children"]).pluck("object_id").run()
+                        change_score += int(children2[guid][i]["size"])
+                        added_objects += [child["object_id"] for child in child_ids]
+                        added_objects_score += int(children2[guid][i]["size"])
+                    else:
+                        nested_change = self._compare_children(db, children1[guid][i]["children"], children2[guid][i]["children"], save= save)
+                        #print "finished"
+                        change_score += nested_change[0]
+                        added_objects += nested_change[1]
+                        added_objects_score += nested_change[2]
 
                     if save:
                         #print children2[guid][i]["id"]
@@ -98,25 +104,31 @@ class Controller(object):
                     continue
                 #if children1[guid][i]["object_id"] == children2[guid][i]["object_id"]:
                 #    continue
-                objects1.append(children1[guid][i]["object_id"])
-                objects2.append(children2[guid][i]["object_id"])
+                if len(children1[guid]) <= i:
+                    added_objects.append(children2[guid][i]["object_id"])
+                    added_objects_score += int(children2[guid][i]["size"])
+                    change_score += int(children2[guid][i]["size"])
+                else:
+                    objects1.append(children1[guid][i]["object_id"])
+                    objects2.append(children2[guid][i]["object_id"])
 
         ### If there are objects, compare the content
         content1 = []
         content2 = []
-        content_cursor = db.table("content").get_all(*(objects1 + objects2), 
-            index= "object_id").order_by("size").pluck("object_id", "content", "size").run()
-        
-        for content in content_cursor:
-            if content["object_id"] in objects1: 
-                content1.append(content)
-            if content["object_id"] in objects2:
-                content2.append(content)
 
-        for i in xrange(len(content2)):
-            change = _object_compare(content1[i]["content"], content2[i]["content"])
-            #print content1[i]["size"], content2[i]["size"], change
-            change_score += change
+        if len(objects1) + len(objects2) > 0:
+            content_cursor = db.table("content").get_all(*(objects1 + objects2), 
+                index= "object_id").order_by("size").pluck("object_id", "content", "size").run()
+            
+            for content in content_cursor:
+                if content["object_id"] in objects1: 
+                    content1.append(content)
+                if content["object_id"] in objects2:
+                    content2.append(content)
+
+            for i in xrange(len(content2)):
+                change = _object_compare(content1[i]["content"], content2[i]["content"])
+                change_score += change
 
         #print guid, change_score, len(added_objects)
         return (change_score, added_objects, added_objects_score)
@@ -199,17 +211,31 @@ class Controller(object):
             self._load_children(db, update["children"])
 
     def command_load_change(self, db, args):
-        updates = self._get_product_updates(db, args.product)
-        firmware_objects = []
+        if args.vendor:
+            vendor_products = []
+            products = db.table("updates").order_by("date").filter(lambda update:
+                update["vendor"].eq(args.vendor)
+            ).pluck("products").run()
+            for product_list in products:
+                for product in product_list["products"]:
+                    if product not in vendor_products:
+                        vendor_products.append(product)
+            products = vendor_products
+        else:
+            products = [args.product]
 
-        for update in updates:
-            firmware_objects.append((update["version"], update["firmware_id"], update["children"], "load_change" in update))
+        for product in products:
+            updates = self._get_product_updates(db, product)
+            firmware_objects = []
 
-        for i in xrange(len(firmware_objects)-1):
-            if not args.force and firmware_objects[i+1][3]:
-                print "Skipping change comparison (%s -> %s), already completed." % (firmware_objects[i][0], firmware_objects[i+1][0])
-                continue
-            self._compare_firmware(db, firmware_objects[i], firmware_objects[i+1], True)
+            for update in updates:
+                firmware_objects.append((update["version"], update["firmware_id"], update["children"], "load_change" in update))
+
+            for i in xrange(len(firmware_objects)-1):
+                if not args.force and firmware_objects[i+1][3]:
+                    print "Skipping change comparison (%s -> %s), already completed." % (firmware_objects[i][0], firmware_objects[i+1][0])
+                    continue
+                self._compare_firmware(db, firmware_objects[i], firmware_objects[i+1], True)
 
     def command_add_lookup(self, db, args):
         if db.table("files").filter({"guid": args.guid}).is_empty().run():
@@ -250,8 +276,10 @@ def main():
 
     '''Simple loading/parsing commands.'''
     parser_load_change = subparsers.add_parser("load_change", help= "Load change scores for objects and firmware.")
-    parser_load_change.add_argument("product", help="Product to load.")
     parser_load_change.add_argument("-f", "--force", action="store_true", default= False, help="Force recalculation.")
+    group = parser_load_change.add_mutually_exclusive_group(required= True)
+    group.add_argument("--product", help="Product to load.")
+    group.add_argument("--vendor", help="Vendor to load.")
 
     parser_load_meta = subparsers.add_parser("load_meta", help= "Extract meta, hashes for a machine's firmware.")
     parser_load_meta.add_argument("product", help= "Product to load.")

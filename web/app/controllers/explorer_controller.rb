@@ -6,6 +6,10 @@ include RethinkDB::Shortcuts
 class ExplorerController < ApplicationController
   before_filter :db_connect
 
+  def sort_direction
+    %w[asc desc].include?(params[:direction]) ? params[:direction] : "asc"
+  end
+
   def explorer
     ### There is nothing on this page for now
 
@@ -20,6 +24,8 @@ class ExplorerController < ApplicationController
       order_by(:index => r.desc(:date)).
       pluck("version", "products", "date", "vendor", "item_id", 
         "attrs", "name", "firmware_id", "size", "load_change").run
+    ### Do sorting here
+
     updates.each do |doc|
       doc["products"].each do |product|
         unless @products.has_key?(product)
@@ -41,9 +47,12 @@ class ExplorerController < ApplicationController
     end
     
     @products_keys = @products.keys.paginate(:page => params[:page], :per_page => @per_page)
-
     ### Leave counting/stats up to the viewer.
+  end
 
+  def sort_product_column
+    keys = ["date", "name", "size"]
+    #Product.column_names.include?(params[:sort]) ? params[:sort] : "name"
   end
 
   def download

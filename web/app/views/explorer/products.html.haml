@@ -1,6 +1,7 @@
 - content_for :title do
   Product Explorer
-- js_json = ""
+- times_json = ""
+- freqs_json = ""
 
 %noscript
   :css
@@ -17,7 +18,8 @@
 %h3
   %div Firmware List: Products
 
-#chart
+#time_chart
+#freq_chart
 
 %div
   %table.table.table-bordered.table-striped.table-hover
@@ -65,65 +67,18 @@
                   - updates.each do |update|
                     %tr
                       = render "update", :firmware => update, :last_update => last_update
-                      - last_update = update[:date]
-                      - if update[:load_change].has_key?("change_score")
-                        - js_json += "['#{update[:vendor]} #{update[:version]}', #{update[:load_change]['change_score']}, #{last_update}], "
+                    - last_update = update[:date]
+                    - update_formatted = Time.at(update[:date]).strftime("%d %b %Y")
+                    - if update[:load_change].has_key?("change_score")
+                      - times_json += "{\"Name\": \"#{name}\", \"Version\": \"#{update[:version]}\", \"Change\": #{update[:load_change]['change_score']}, \"Time\": \"#{update_formatted}\"}, "
+        - freq = updates.map{|x| (x[:date]-updates[-1][:date])/(60*60)}.compact
+        - freqs_json += "{\"Name\": \"#{name}\", \"Change\": #{(freq.sum/freq.size)/updates.size}, \"Count\": #{updates.size} }, "
 
   = will_paginate @products_keys
 
 - content_for :javascript do 
   :javascript
-    var data = [#{js_json}]
-
-    var margin = {top: 20, right: 15, bottom: 60, left: 60}
-      , width = 960 - margin.left - margin.right
-      , height = 500 - margin.top - margin.bottom;
-    
-    var x = d3.scale.linear()
-      .domain([0, d3.max(data, function(d) { return d[1]; })])
-      .range([ 0, width ]);
-    
-    var y = d3.scale.linear()
-      .domain([0, d3.max(data, function(d) { return d[2]; })])
-      .range([ height, 0 ]);
- 
-    var chart = d3.select('#chart')
-      .append('svg:svg')
-      .attr('width', width + margin.right + margin.left)
-      .attr('height', height + margin.top + margin.bottom)
-      .attr('class', 'chart')
-
-    var main = chart.append('g')
-      .attr('transform', 'translate(' + margin.left + ',' + margin.top + ')')
-      .attr('width', width)
-      .attr('height', height)
-      .attr('class', 'main')   
-        
-    // draw the x axis
-    var xAxis = d3.svg.axis()
-      .scale(x)
-      .orient('bottom');
-
-    main.append('g')
-      .attr('transform', 'translate(0,' + height + ')')
-      .attr('class', 'main axis date')
-      .call(xAxis);
-
-    // draw the y axis
-    var yAxis = d3.svg.axis()
-      .scale(y)
-      .orient('left');
-
-    main.append('g')
-      .attr('transform', 'translate(0,0)')
-      .attr('class', 'main axis date')
-      .call(yAxis);
-
-    var g = main.append("svg:g"); 
-    
-    g.selectAll("scatter-dots")
-      .data(data)
-      .enter().append("svg:circle")
-          .attr("cx", function (d,i) { return x(d[1]); } )
-          .attr("cy", function (d) { return y(d[2]); } )
-          .attr("r", 8);
+    var update_times = [#{times_json}]
+    var update_freqs = [#{freqs_json}]
+    generate_time_bars('#time_chart', update_times);
+    generate_freq_bars('#freq_chart', update_freqs)
