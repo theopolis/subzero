@@ -1,34 +1,39 @@
-.container
-  - if defined?(stats)
-    .row
-      %div.col-lg-4
-        %table.table.table-bordered.table-striped.table-hover
-          %thead
-            %tr
-              %th Key
-              %th Value
-          %tbody
-            - stats.each do |key, value|
-              %tr
-                %td= key
-                %td= value
+%tr
+  %td 
+    %div
+      - if obj.has_key?("guid")
+        - if source
+          %a{ :href => "#"} #{obj["guid"]}
+        - else
+          #{obj["guid"]}
+      - else
+        (obj) #{obj["object_id"]}
+    %small
+      #{obj["vendor"]}
+      (#{obj["type"]})
+  %td
+    - if obj["attrs"].has_key?("name")
+      .none= obj["attrs"]["name"]
+    - if obj["attrs"].has_key?("description")
+      .none= obj["attrs"]["description"]
+    - if obj.has_key?("info")
+      - obj["info"].each do |key, value|
+        %b= key
+        %small= value
+    - if obj.has_key?("load_meta")
+      %div
+        %small (#{obj["load_meta"]["magic"]})
+    -# obj["objects"].each do |sub_obj|
+  %td #{obj["size"]} 
+  %td 
+    - if obj.has_key? ("stats")
+      - obj["stats"].each do |key, value|
+        %b= key
+        %small= value
+        - if key == "Changed"
+          %br
+  %td 
+- if obj.has_key?("objects")
 
-  - objects.each do |obj|
-    .row
-      %div.col-lg-4
-        .h4 
-          Object
-          = obj["id"]
-        %table.table.table-bordered.table-striped.table-hover
-          %thead
-            %tr
-              %th Key
-              %th Value
-          %tbody
-            - obj["stats"].each do |key, value|
-              %tr
-                %td= key
-                %td= value
-        .download
-          = link_to "/explorer/download/#{obj["id"]}" do
-            Download
+  - obj["objects"].each do |child|
+    = render("object", :obj => child, :source => false)

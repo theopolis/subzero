@@ -60,6 +60,66 @@ function generate_freq_bars(selector, data) {
   });
 }
 
+function generate_delta_points(selector, data) {
+  var svg = dimple.newSvg(selector, 1900, 500);
+  var myChart = new dimple.chart(svg, data);
+  myChart.setBounds(70, 40, 1590, 320)
+
+  //var x = myChart.addCategoryAxis("x", "Version");
+  //var y = myChart.addMeasureAxis("y", "Delta");
+  //var z = myChart.addMeasureAxis("z", "Change");
+  //myChart.addSeries("Name", dimple.plot.bubble);
+  //var s = myChart.addSeries("Name", dimple.plot.line);
+
+  var x = myChart.addMeasureAxis("x", "Delta");
+  var y = myChart.addMeasureAxis("y", "Change");
+  var s = myChart.addSeries(["Name", "Version"], dimple.plot.bubble);
+  //x.overrideMin = 1;
+
+  myChart.addLegend(180, 10, 360, 20, "right");
+
+  s.addEventHandler("mouseover", function(e) {
+    var cx = parseFloat(e.selectedShape.attr("cx")),
+        cy = parseFloat(e.selectedShape.attr("cy"));
+    var width = 170,
+      height = 48,
+      x = (cx + width + 10 < svg.attr("width") ?
+        cx + 10 :
+        cx - width - 20);
+      y = (cy - height / 2 < 0 ?
+        15 :
+        cy - height / 2);
+
+    popup = svg.append("g");
+    svg._popup = popup;
+
+    popup
+      .append("rect").attr("x", x + 5).attr("y", y - 5).attr("width", 150)
+      .attr("height", height).attr("rx", 5).attr("ry", 5)
+      .style("fill", 'white').style("stroke", 'black').style("stroke-width", 1);
+
+    console.log(e);
+
+    popup
+      .append('text').attr('x', x + 0).attr('y', y + 10)
+      .append('tspan').attr('x', x + 10).attr('y', y + 8)
+      .text(e.seriesValue[0] + " " + e.seriesValue[1] + "\n")
+      .style("font-family", "sans-serif").style("font-size", 10).style("fill", "black")
+      .append('tspan').attr('x', x + 10).attr('y', y + 22)
+      .text('Change ' + Math.round(e.yValue * 10) / 10)
+      .style("font-family", "sans-serif").style("font-size", 10).style("fill", "black")
+      .append('tspan').attr('x', x + 10).attr('y', y + 36)
+      .text("Delta " + e.xValue)
+      .style("font-family", "sans-serif").style("font-size", 10).style("fill", "black")
+  });
+
+  s.addEventHandler("mouseleave", function(e) {
+    generic_onLeave(e, svg);
+  });
+
+  myChart.draw();
+}
+
 function generate_time_bars(selector, data) {
   var svg = dimple.newSvg(selector, 1900, 500);
   var myChart = new dimple.chart(svg, data);
@@ -130,10 +190,10 @@ function generic_onHover(e, svg) {
     .append('text').attr('x', x + 0).attr('y', y + 10)
     .append('tspan').attr('x', x + 10).attr('y', y + 8)
     .text(e.seriesValue[0] + "\n")
-    .style("font-family", "sans-serif").style("font-size", 10)
+    .style("font-family", "sans-serif").style("font-size", 10).style("fill", "black")
     .append('tspan').attr('x', x + 10).attr('y', y + 22)
     .text('Change ' + Math.round(e.yValue * 10) / 10)
-    .style("font-family", "sans-serif").style("font-size", 10)
+    .style("font-family", "sans-serif").style("font-size", 10).style("fill", "black")
 }
 
 function generic_onLeave(e, svg) {

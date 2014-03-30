@@ -6,7 +6,7 @@
     %meta{:name => "description", :content => "#{content_for?(:description) ? yield(:description) : 'Rails Bootstrap'}"}
     = stylesheet_link_tag "application", media: "all", "data-turbolinks-track" => true
     = javascript_include_tag "application", "data-turbolinks-track" => true
-    = stylesheet_link_tag "overrides", media: "all"
+    = stylesheet_link_tag "overrides", "darkstrap", media: "all"
     = csrf_meta_tags
   %body
     %header

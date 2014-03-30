@@ -20,6 +20,7 @@
 
 #time_chart
 #freq_chart
+#delta_chart
 
 %div
   %table.table.table-bordered.table-striped.table-hover
@@ -67,10 +68,11 @@
                   - updates.each do |update|
                     %tr
                       = render "update", :firmware => update, :last_update => last_update
+                    - delta = if last_update != 0 then (update[:date] - last_update)/(60*60)*-1 else 0 end
                     - last_update = update[:date]
                     - update_formatted = Time.at(update[:date]).strftime("%d %b %Y")
                     - if update[:load_change].has_key?("change_score")
-                      - times_json += "{\"Name\": \"#{name}\", \"Version\": \"#{update[:version]}\", \"Change\": #{update[:load_change]['change_score']}, \"Time\": \"#{update_formatted}\"}, "
+                      - times_json += "{\"Name\": \"#{name}\", \"Version\": \"#{update[:version]}\", \"Change\": #{update[:load_change]['change_score']}, \"Time\": \"#{update_formatted}\", \"Delta\": #{delta}}, "
         - freq = updates.map{|x| (x[:date]-updates[-1][:date])/(60*60)}.compact
         - freqs_json += "{\"Name\": \"#{name}\", \"Change\": #{(freq.sum/freq.size)/updates.size}, \"Count\": #{updates.size} }, "
 
@@ -80,5 +82,7 @@
   :javascript
     var update_times = [#{times_json}]
     var update_freqs = [#{freqs_json}]
+
     generate_time_bars('#time_chart', update_times);
-    generate_freq_bars('#freq_chart', update_freqs)
+    generate_freq_bars('#freq_chart', update_freqs);
+    generate_delta_points('#delta_chart', update_times);

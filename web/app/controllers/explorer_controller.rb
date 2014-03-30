@@ -32,6 +32,7 @@ class ExplorerController < ApplicationController
           @products[product] = []
         end
         ### Add the version/date/vendor
+        add_object_stats!(doc, false)
         @products[product].push({
           :name => doc["name"], 
           :version => doc["version"], 
@@ -41,7 +42,8 @@ class ExplorerController < ApplicationController
           :firmware_id => doc["firmware_id"],
           :size => doc["size"],
           :status => doc["attrs"]["status"],
-          :load_change => if doc.has_key?("load_change") then doc["load_change"] else {} end
+          :load_change => if doc.has_key?("load_change") then doc["load_change"] else {} end,
+          :stats => doc["stats"]
         })
       end
     end
@@ -123,28 +125,47 @@ class ExplorerController < ApplicationController
     @object_id = params[:id]
     @firmware_id = "None"
     @firmware_object = {}
-    @objects = []
 
     ### Get the base firmware object
-    cursor = r.db("uefi").table("objects").get_all(@object_id, :index => "object_id").
-      pluck("firmware_id", "attrs", "size", "type", "children", "vendor", "guid", "load_meta", "load_change").
-      order_by(r.desc(lambda {|doc| doc[:size]})).limit(1).run
+    cursor = r.db("uefi").table("objects").get_all(@object_id, :index => "object_id").eq_join(
+      'firmware_id', r.db("uefi").table("updates"), :index => "firmware_id"
+      ).order_by(r.desc(lambda {|doc| doc[:size]})).limit(1).zip.run
 
     cursor.each do |obj|
       @firmware_id = obj["firmware_id"]
       @firmware_object = get_object_info(obj)
     end
 
+    ### Keep a hash of child_id -> object id
+    child_map = {}
+    child_ids = @firmware_object["children"].dup
+    child_ids.each {|id| child_map[id] = @firmware_object}
+    @firmware_object["objects"] = []
+
     ### Get the children objects
-    #puts @firmware_object["children"]
-    cursor = r.db("uefi").table("objects").get_all(*@firmware_object["children"]).
-      pluck("object_id", "attrs", "size", "type", "children", "vendor", "guid", "load_meta", "load_change").
-      order_by(r.desc(lambda {|doc| doc[:size]})).run
+    while child_ids.length > 0
+      cursor = r.db("uefi").table("objects").get_all(*child_ids).
+        map{|doc|
+          doc.merge({
+            "content" => r.db("uefi").table("content").get_all(doc["object_id"], :index => "object_id").pluck("attrs", "load_meta").coerce_to("array")
+          })}.
+        order_by(r.desc(lambda {|doc| doc[:size]})).run
 
-
-    cursor.each do |obj|
-      @objects.push(get_object_info(obj))
+      child_ids = []
+      cursor.each do |obj|
+        puts obj["content"].length
+        ### Add this object to it's parent
+        obj["objects"] = []
+        child_map[obj["id"]]["objects"].push(get_object_info(obj))
+        #@objects.push(get_object_info(obj))
+        if obj.has_key?("children")
+          obj["children"].each{|id| child_map[id] = obj}
+          child_ids = child_ids.concat(obj["children"].dup)
+        end
+      end
     end
+
+    @objects = @firmware_object["objects"]
 
   end
 
@@ -240,7 +261,7 @@ private
     add_object_stats!(_obj, attrs = false, meta = false)
 
     ### This is a different type of stats
-    objects_count = _obj["children"].length
+    objects_count = if _obj.has_key?("children") then _obj["children"].length else 0 end
     unless _obj.has_key?("attrs")
       _obj["attrs"] = {}
     end
@@ -251,7 +272,12 @@ private
       }
       _obj["stats"]["Shared"] = r.db("uefi").table("objects").get_all(_obj["guid"], :index => "guid").count.run
       _obj["stats"]["Matches"] = r.db("uefi").table("objects").get_all(_obj["object_id"], :index => "object_id").count.run
-
+    else
+      if _obj.has_key?("attrs") and _obj["attrs"].has_key?("type_name")
+        _obj["info"] = {
+          "SectionType" => _obj["attrs"]["type_name"]
+        }
+      end
     end
 
     #if objects_count > 0 then _obj["stats"]["Objects"] = objects_count end
