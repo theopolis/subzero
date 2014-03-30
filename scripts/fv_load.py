@@ -9,31 +9,8 @@ import sys
 import rethinkdb as r
 
 from uefi_firmware import *
-from uefi_firmware.pfs import PFSFile
-
-#def brute_search(data):
-#    volumes = utils.search_firmware_volumes(data)
-#    objects = []
-#
-#    for index in volumes:
-#        objects += parse_firmware_volume(data[index-40:], name=index)
-#    return objects
-#    pass
-
-#def parse_firmware_volume(data, name="volume"):
-#    firmware_volume = uefi.FirmwareVolume(data, name)
-#    firmware_volume.process()
-#
-#    objects = firmware_volume.iterate_objects(True)
-#    return objects
-
-#def load_uefi_volumes(firmware_id, data):
-#    objects = brute_search(data)
-#
-#    files = get_files(objects)
-#    for uefi_file in files:
-#        store_file(firmware_id, uefi_file)
-#    pass
+from uefi_firmware.pfs import PFSFile, PFS_GUIDS
+from uefi_firmware.utils import search_firmware_volumes
 
 def get_file_name(_object):
     if len(_object["label"]) > 0:
@@ -120,7 +97,7 @@ def _load_pe(_object):
 
 def _object_entry(_object):
     #return {key: value for key, value in _object.iteritems() if key in ["guid", "type", "attrs", "object_id", "chunks", "other"]}
-    entry = {k: v for k, v in _object.iteritems() if k in ["guid", "type", "attrs", "chunks", "other"]}
+    entry = {k: v for k, v in _object.iteritems() if k in ["guid", "type", "attrs", "other"]}
     return entry
 
 def store_content(firmware_id, object_id, content, content_type= "object"):
@@ -203,8 +180,8 @@ def store_file(firmware_id, uefi_file):
     print "Stored UEFI file (%s) %s." % (firmware_id, uefi_file["guid"])
     return keys
 
-def load_uefi_volume(firmware_id, data, object_id= None):
-    object_id = firmware_id if object_id is None else object_id
+def load_uefi_volume(firmware_id, data, generate_object_id= False):
+    object_id = firmware_id #if object_id is None else object_id
     firmware_volume = uefi.FirmwareVolume(data)
     if not firmware_volume.valid_header:
         print "This is not a valid UEFI firmware volume (%s)." % object_id
@@ -213,9 +190,12 @@ def load_uefi_volume(firmware_id, data, object_id= None):
         print "The UEFI firmware volume (%s) did not parse correctly." % object_id
         return None
 
+    if generate_object_id:
+        object_id = get_firmware_id(data[:firmware_volume.size])
+
     if not objects_table.get_all(object_id, index="object_id").is_empty().run():
         print "Firmware volume object (%s) exists." % object_id
-        return object_id
+        return [object_id]
 
     ### Store the files
     objects = firmware_volume.iterate_objects(True)
@@ -236,7 +216,7 @@ def load_uefi_volume(firmware_id, data, object_id= None):
         ### Todo: store volume-specific attributes
     }).run()
 
-    return object_id
+    return [object_id]
 
     pass
 
@@ -276,7 +256,7 @@ def load_uefi_capsule(firmware_id, data, object_id= None):
     }).run()
 
     ### Not storing capsule content (yet), may be too much data.
-    return object_id
+    return [object_id]
     pass
 
 def load_pfs(firmware_id, data):
@@ -307,10 +287,18 @@ def load_pfs(firmware_id, data):
         for chunk in section_info["chunks"]:
             store_content(firmware_id, section_id, chunk, content_type= "pfs_chunk")
 
-        object_keys = load_uefi_volume(firmware_id, section_info["content"], object_id= section_id)
-        if object_keys is None:
-            ### This section is not a UEFI-volume.
+        if section_info["guid"] == PFS_GUIDS["FIRMWARE_VOLUMES"]:
+            ### Brute search for volumes here
+            object_keys = []
+            volumes = search_firmware_volumes(section_info["content"])
+            print volumes
+            for index in volumes:
+                volume_keys = load_uefi_volume(firmware_id, section_info["content"][index-40:], generate_object_id= True)
+                if volume_keys is not None:
+                    object_keys += volume_keys
+        else:
             object_keys = store_object(firmware_id, section_info, object_type= "pfs_section")
+
         if object_keys is not None:
             child_ids += object_keys
 
