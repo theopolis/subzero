@@ -3,16 +3,19 @@
 
 %h3
   Firmware ID: 
-  = @firmware_id
+  %a{ :href => "/explorer/firmware/#{@firmware_id}/"}
+    = @firmware_id
 
 .desc
   = @firmware_object["description"]
 
 %div
+
   %table.table.table-bordered.table-striped.table-hover
     %thead
       %tr
         %th ObjectID
+        %th Type
         %th Info
         %th Size
         %th Stats
@@ -21,10 +24,11 @@
       %tr
         %td 
           %div
-            #{@firmware_id}
+            #{@firmware_object["object_id"]}
           %small
             #{@firmware_object["vendor"]}
             (#{@firmware_object["type"]})
+        %td 
         %td
           -#- if @firmware_object.has_key?("description")
           -#  .none= @firmware_object["description"]
@@ -45,3 +49,5 @@
           Children
       - @objects.each do |obj|
         = render("object", :obj => obj, :source => true)
+
+  = will_paginate @objects

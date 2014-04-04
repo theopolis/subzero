@@ -97,6 +97,7 @@ def _load_pe(_object):
 
 def _object_entry(_object):
     #return {key: value for key, value in _object.iteritems() if key in ["guid", "type", "attrs", "object_id", "chunks", "other"]}
+    #print _object["attrs"]
     entry = {k: v for k, v in _object.iteritems() if k in ["guid", "type", "attrs", "other"]}
     return entry
 
@@ -195,7 +196,8 @@ def load_uefi_volume(firmware_id, data, generate_object_id= False):
 
     if not objects_table.get_all(object_id, index="object_id").is_empty().run():
         print "Firmware volume object (%s) exists." % object_id
-        return [object_id]
+        primary = objects_table.get_all(object_id, index="object_id").limit(1).pluck("id").coerce_to('array').run()[0]["id"]
+        return [primary]
 
     ### Store the files
     objects = firmware_volume.iterate_objects(True)
@@ -206,7 +208,7 @@ def load_uefi_volume(firmware_id, data, generate_object_id= False):
     for uefi_file in files:
         child_ids += store_file(object_id, uefi_file)    
 
-    objects_table.insert({
+    entry = {
         "firmware_id": firmware_id,
         "object_id": object_id,
         "children": child_ids,
@@ -214,10 +216,9 @@ def load_uefi_volume(firmware_id, data, generate_object_id= False):
         "type": "uefi_volume",
         "size": len(data)
         ### Todo: store volume-specific attributes
-    }).run()
+    }
 
-    return [object_id]
-
+    return get_result_keys(objects_table.insert(entry).run())
     pass
 
 def load_uefi_capsule(firmware_id, data, object_id= None):
@@ -234,7 +235,8 @@ def load_uefi_capsule(firmware_id, data, object_id= None):
     ### Create the parent object
     if not objects_table.get_all(object_id, index="object_id").is_empty().run():
         print "Firmware capsule object (%s) exists." % object_id
-        return object_id
+        primary = objects_table.get_all(object_id, index="object_id").limit(1).pluck("id").coerce_to('array').run()[0]["id"]
+        return [primary]
 
     ### Only handle capsule's filed with firmware volumes?
     volume = capsule.capsule_body
@@ -245,7 +247,7 @@ def load_uefi_capsule(firmware_id, data, object_id= None):
     for uefi_file in files:
         child_ids += store_file(object_id, uefi_file)
 
-    objects_table.insert({
+    entry = {
         "firmware_id": firmware_id,
         "object_id": object_id,
         "children": child_ids,
@@ -253,10 +255,11 @@ def load_uefi_capsule(firmware_id, data, object_id= None):
         "type": "uefi_capsule",
         "size": len(data)
         ### Todo: store capsule-specific attributes
-    }).run()
+    }
 
     ### Not storing capsule content (yet), may be too much data.
-    return [object_id]
+    #return [object_id]
+    return get_result_keys(objects_table.insert(entry).run())
     pass
 
 def load_pfs(firmware_id, data):
@@ -278,6 +281,9 @@ def load_pfs(firmware_id, data):
 
         if not objects_table.get_all(firmware_id, index="firmware_id").filter({"guid": section_info["guid"]}).is_empty().run():
             print "Skipping PFS (%s) GUID %s, object exists." % (firmware_id, section_info["guid"])
+            primary = objects_table.get_all(firmware_id, index="firmware_id").filter({"guid": section_info["guid"]}).\
+                limit(1).pluck("id").coerce_to('array').run()[0]["id"]
+            child_ids.append(primary)
             continue
 
         section_id = get_firmware_id(section_info["content"])

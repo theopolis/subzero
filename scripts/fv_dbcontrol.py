@@ -168,7 +168,7 @@ class Controller(object):
     def _load_meta(self, db, _object):
         content = base64.b64decode(_object["content"])
         #print _object["firmware_id"]
-        db.table("objects").get(_object["id"]).update({
+        db.table("content").get(_object["id"]).update({
             "load_meta": {
                 "magic":  magic.from_buffer(content),
                 "ssdeep": pydeep.hash_buf(content),
@@ -204,11 +204,25 @@ class Controller(object):
         pass
 
     def command_load_meta(self, db, args):
-        updates = self._get_product_updates(db, args.product)
-        for update in updates:
-            if "children" not in update or len(update["children"]) == 0:
-                continue
-            self._load_children(db, update["children"])
+        if args.vendor:
+            vendor_products = []
+            products = db.table("updates").order_by("date").filter(lambda update:
+                update["vendor"].eq(args.vendor)
+            ).pluck("products").run()
+            for product_list in products:
+                for product in product_list["products"]:
+                    if product not in vendor_products:
+                        vendor_products.append(product)
+            products = vendor_products
+        else:
+            products = [args.product]
+
+        for product in products:
+            updates = self._get_product_updates(db, product)
+            for update in updates:
+                if "children" not in update or len(update["children"]) == 0:
+                    continue
+                self._load_children(db, update["children"])
 
     def command_load_change(self, db, args):
         if args.vendor:
@@ -237,22 +251,35 @@ class Controller(object):
                     continue
                 self._compare_firmware(db, firmware_objects[i], firmware_objects[i+1], True)
 
-    def command_add_lookup(self, db, args):
-        if db.table("files").filter({"guid": args.guid}).is_empty().run():
-            if args.force is False:
-                print "Cannot find any files matching GUID (%s), please use the force option." % args.guid
+    def _add_lookup(self, db, guid, name, value, force= False):
+        if db.table("objects").get_all(guid, index= "guid").is_empty().run():
+            if force is False:
+                print "Cannot find any files matching GUID (%s), please use the force option." % guid
                 return
+            pass
 
-        if db.table("lookup").filter({"guid": args.guid}).is_empty().run():
+        if db.table("lookup").get_all(guid, index= "guid").is_empty().run():
             db.table("lookup").insert({
-                "guid": args.guid,
-                "%s" % args.name: args.value
+                "guid": guid,
+                "%s" % name: value
             }).run()
-            print "Added lookup for GUID (%s), with (%s) = (%s)." % (args.guid, args.name, args.value) 
+            print "Added lookup for GUID (%s), with (%s) = (%s)." % (guid, name, value) 
         else:
-            db.table("lookup").filter({"guid": args.guid}).update({"%s" % args.name: args.value}).run()
-            print "Updated lookup for GUID (%s), set (%s) = (%s)." % (args.guid, args.name, args.value)
-        pass
+            db.table("lookup").get_all(guid, index= "guid").update({"%s" % name: value}).run()
+            print "Updated lookup for GUID (%s), set (%s) = (%s)." % (guid, name, value)
+        pass       
+
+    def command_add_lookup(self, db, args):
+        self._add_lookup(db, args.guid, args.name, args.value, force= args.force)
+
+    def command_load_guids(self, db, args):
+        from uefi_firmware.guids import GUID_TABLES
+        from uefi_firmware.utils import rfguid
+        for table in GUID_TABLES:
+            for name, r_guid in table.iteritems():
+                #print name, rfguid(r_guid)
+                self._add_lookup(db, rfguid(r_guid), "guid_name", name, True)
+                pass
 
 def parse_extra (parser, namespace):
     namespaces = []
@@ -282,14 +309,19 @@ def main():
     group.add_argument("--vendor", help="Vendor to load.")
 
     parser_load_meta = subparsers.add_parser("load_meta", help= "Extract meta, hashes for a machine's firmware.")
-    parser_load_meta.add_argument("product", help= "Product to load.")
     parser_load_meta.add_argument("-f", "--force", action="store_true", default= False, help="Force recalculation.")
+    group = parser_load_meta.add_mutually_exclusive_group(required= True)
+    group.add_argument("--product", help="Product to load.")
+    group.add_argument("--vendor", help="Vendor to load.")
 
     parser_add_lookup = subparsers.add_parser("add_lookup", help= "Add metadata about a file GUID.")
     parser_add_lookup.add_argument("guid", help= "File GUID")
     parser_add_lookup.add_argument("name", help="Key to add to the GUID.")
     parser_add_lookup.add_argument("value", help= "Value")
     parser_add_lookup.add_argument("-f", "--force", default=False, action= "store_true", help= "Force the lookup insert.")
+
+    parser_load_guids = subparsers.add_parser("load_guids", help= "Read in EFI GUID definitions.")
+    parser_load_guids.add_argument("-f", "--force", default= False, action= "store_true", help= "Override existing DB GUID definitions.")
 
     args = argparser.parse_args()
 
@@ -298,6 +330,12 @@ def main():
 
     r.connect("localhost", 28015).repl()
     db = r.db("uefi")
+
+    #objects_table = db.table("objects")
+    #updates_table = db.table("updates")
+    #content_table = db.table("content")
+    #lookup_table = db.table("lookup")
+    #stats_table = db.table("stats")
 
     command_ptr = getattr(controller, command, None)
     if command_ptr is not None:

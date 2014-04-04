@@ -37,7 +37,7 @@
         %th Item/FW ID
         %th Actions
     %tbody
-      - product_index = (@page_num * @per_page)
+      - product_index = (@page_num * 30)
       - @products_keys.each do |name|
         - updates = @products[name]
         - product_index += 1

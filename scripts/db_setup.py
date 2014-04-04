@@ -19,9 +19,11 @@ db_cmd(uefi.table_create("objects"))
 db_cmd(uefi.table_create("lookup"))
 db_cmd(uefi.table_create("stats"))
 
+db_cmd(uefi.table("lookup").index_create("guid"))
 
 db_cmd(uefi.table("updates").index_create("item_id"))
 db_cmd(uefi.table("updates").index_create("firmware_id"))
+db_cmd(uefi.table("updates").index_create("date"))
 
 db_cmd(uefi.table("objects").index_create("firmware_id"))
 db_cmd(uefi.table("objects").index_create("object_id"))

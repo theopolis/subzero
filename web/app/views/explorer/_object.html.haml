@@ -1,16 +1,28 @@
 %tr
   %td 
     %div
-      - if obj.has_key?("guid")
-        - if source
-          %a{ :href => "#"} #{obj["guid"]}
-        - else
-          #{obj["guid"]}
+      - unless obj.has_key?("guid")
+        [obj] 
+      - if source
+        %a{ :href => "/explorer/firmware/#{obj["object_id"]}/" }
+          - unless obj.has_key?("guid")
+            #{obj["object_id"]}
+          - else
+            #{obj["guid"]}
       - else
-        (obj) #{obj["object_id"]}
-    %small
-      #{obj["vendor"]}
-      (#{obj["type"]})
+        #{obj["object_id"]}
+      - if obj.has_key?("guid_name")
+        %div
+          %small
+            = obj["guid_name"]
+  %td
+    - if source == false and obj.has_key?("load_meta")
+      #{obj["load_meta"]["magic"]}
+    - else
+      %small
+        #{obj["vendor"]}
+        - if source == true
+          (#{obj["type"]})
   %td
     - if obj["attrs"].has_key?("name")
       .none= obj["attrs"]["name"]
@@ -21,13 +33,15 @@
         %b= key
         %small= value
     - if obj.has_key?("load_meta")
-      %div
-        %small (#{obj["load_meta"]["magic"]})
+      - if source == true
+        %div
+          %small (#{obj["load_meta"]["magic"]})
     -# obj["objects"].each do |sub_obj|
   %td #{obj["size"]} 
   %td 
     - if obj.has_key? ("stats")
       - obj["stats"].each do |key, value|
+        -# unless key == "Magic"
         %b= key
         %small= value
         - if key == "Changed"
