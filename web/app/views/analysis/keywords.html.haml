@@ -1,0 +1,15 @@
+- content_for :title do
+  Analysis - Keywords
+
+%h3
+  %div Subzero Keyword Analysis
+
+.container
+  .row
+    .col-md-12
+      %table
+        - update_index = 0
+        - @updates.each do |update|
+          - update_index += 1
+          %tr
+            = render :partial => "explorer/update", :locals => { :firmware => update, :last_update => 0 }

@@ -70,7 +70,11 @@ Dell Spider:
 
 '''
 
+CACHE_TIMES = {}
+
 def load_details(details, file_name= "None"):
+  global CACHE_TIMES
+
   if "attrs" not in details:
     print "Warning: not attrs in details (%s)." % file_name
   update = {"item_id": details["item_id"]}
@@ -96,6 +100,7 @@ def load_details(details, file_name= "None"):
         "item_id": version[3],
         "details_url": version[1]
       })
+      CACHE_TIMES[version[3]] = int(datetime.strptime(version[2], "%m/%d/%Y %H:%M:%S %p").strftime("%s"))
     update["vendor"] = "Dell"
     pass
 
@@ -165,12 +170,14 @@ if __name__ == "__main__":
         print "ItemID: %s is a duplicate, skipping." % update["item_id"]
         continue
       updates.append(update) 
-
-      #try:
-      #  load_details(details, file_name)
-      #except Exception, e:
-      #  print "Cannot parse (%s). (%s)" % (file_name, str(e))
-      #  print json.dumps(details, indent= 2)
       pass
 
+    ### Now update the precision using cached times.
+    if len(CACHE_TIMES) > 0:
+      for update in updates:
+        if update["item_id"] in CACHE_TIMES:
+          update["date"] = CACHE_TIMES[update["item_id"]]
+
+    ### Apply all updates
     table.insert(updates).run()
+

@@ -1,0 +1,20 @@
+- content_for :title do
+  Analysis - GUIDs
+
+%h3
+  %div Subzero GUID List
+
+.container
+  .row
+    .col-md-12
+      %table
+        - guid_index = 0
+        - @guids.each do |guid|
+          - guid_index += 1
+          %tr
+            %td= guid_index
+            %td= guid[:count]
+            %td.guid
+              %a{ :href => "/analysis/guid/#{guid[:guid]}" }
+                = guid[:guid]
+            %td= guid[:name]

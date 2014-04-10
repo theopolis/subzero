@@ -19,6 +19,11 @@ RailsBootstrap::Application.routes.draw do
   ### Downloads
   get 'explorer/file/:firmware_id/:id' => "explorer#file"
   get 'explorer/raw/:firmware_id/:id' => "explorer#raw"
-
   get 'explorer/download/:object_id' => "explorer#download"
+
+  ### Analysis
+  get 'analysis' => "analysis#analysis"
+  get 'analysis/guids' => "analysis#guids"
+  get 'analysis/guid/:id' => "analysis#guid"
+  get 'analysis/keywords' => "analysis#keywords"
 end

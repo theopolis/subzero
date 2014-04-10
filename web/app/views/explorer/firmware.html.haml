@@ -4,50 +4,39 @@
 %h3
   Firmware ID: 
   %a{ :href => "/explorer/firmware/#{@firmware_id}/"}
-    = @firmware_id
+    .guid= @firmware_id
 
 .desc
   = @firmware_object["description"]
 
-%div
+.container
+  .row
+    .col-md-12
+      %table
+        - @changed.each do |obj|
+          %tr
+            %td
+              %a{ :href => "/explorer/firmware/#{obj["object_id"]}/"} 
+                = obj["guid"]
+            %td= obj["load_change"]
+            %td= obj["attrs"]
 
-  %table.table.table-bordered.table-striped.table-hover
-    %thead
-      %tr
-        %th ObjectID
-        %th Type
-        %th Info
-        %th Size
-        %th Stats
-        %th Actions
-    %tbody
-      %tr
-        %td 
-          %div
-            #{@firmware_object["object_id"]}
-          %small
-            #{@firmware_object["vendor"]}
-            (#{@firmware_object["type"]})
-        %td 
-        %td
-          -#- if @firmware_object.has_key?("description")
-          -#  .none= @firmware_object["description"]
-          - if @firmware_object.has_key?("load_meta")
-            %small (#{@firmware_object["load_meta"]["magic"]})
-          -# obj["objects"].each do |sub_obj|
-        %td #{@firmware_object["size"]} 
-        %td 
-          - if @firmware_object.has_key? ("stats")
-            - @firmware_object["stats"].each do |key, value|
-              %b= key
-              %small= value
-              - if key == "Changed"
-                %br
-        %td 
-      %tr
-        %th{ :colspan => "6" }
-          Children
-      - @objects.each do |obj|
-        = render("object", :obj => obj, :source => true)
+  .row
+    %table.table.table-bordered.table-striped.table-hover
+      %thead
+        %tr
+          %th ObjectID
+          %th Type
+          %th Info
+          %th Size
+          %th Stats
+          %th Actions
+      %tbody
+        = render("object", :obj => @firmware_object, :source => true, :independent => true, :base => true)
+        %tr
+          %th{ :colspan => "6" }
+            Children
+        - @objects.each do |obj|
+          = render("object", :obj => obj, :source => true, :independent => false, :base => false)
 
-  = will_paginate @objects
+    = will_paginate @objects

@@ -21,7 +21,7 @@
           %td 
             %div
               %a{ :href => "/explorer/file/#{@firmware_id}/#{file["guid"]}"}
-                #{file["guid"]}
+                .guid= file["guid"]
             %small (#{file["attrs"]["type_name"]})
           %td 
 

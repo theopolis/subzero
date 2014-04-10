@@ -118,7 +118,9 @@ def store_object(firmware_id, _object, object_type= "uefi_object"):
     if "_self" in _object:
         ### If this is an EFI object, it must be a basic object (section object)
         if isinstance(_object["_self"], uefi.FirmwareObject) and not isinstance(_object["_self"], uefi.EfiSection): 
-            return None
+            if not isinstance(_object["_self"], uefi.BaseObject):
+                print "Object tpye (%s), cannot be stored." % _object["_self"]
+                return None
 
     '''Store base objects only.'''
     object_id = get_firmware_id(_object["content"])
@@ -181,7 +183,7 @@ def store_file(firmware_id, uefi_file):
     print "Stored UEFI file (%s) %s." % (firmware_id, uefi_file["guid"])
     return keys
 
-def load_uefi_volume(firmware_id, data, generate_object_id= False):
+def load_uefi_volume(firmware_id, data, guid= None, order=None, generate_object_id= False):
     object_id = firmware_id #if object_id is None else object_id
     firmware_volume = uefi.FirmwareVolume(data)
     if not firmware_volume.valid_header:
@@ -194,7 +196,7 @@ def load_uefi_volume(firmware_id, data, generate_object_id= False):
     if generate_object_id:
         object_id = get_firmware_id(data[:firmware_volume.size])
 
-    if not objects_table.get_all(object_id, index="object_id").is_empty().run():
+    if not args.force and not objects_table.get_all(object_id, index="object_id").is_empty().run():
         print "Firmware volume object (%s) exists." % object_id
         primary = objects_table.get_all(object_id, index="object_id").limit(1).pluck("id").coerce_to('array').run()[0]["id"]
         return [primary]
@@ -206,7 +208,7 @@ def load_uefi_volume(firmware_id, data, generate_object_id= False):
     ### Store the volume object information
     child_ids = []
     for uefi_file in files:
-        child_ids += store_file(object_id, uefi_file)    
+        child_ids += store_file(firmware_id, uefi_file)    
 
     entry = {
         "firmware_id": firmware_id,
@@ -218,10 +220,13 @@ def load_uefi_volume(firmware_id, data, generate_object_id= False):
         ### Todo: store volume-specific attributes
     }
 
+    if guid is not None: entry["guid"] = guid
+    if order is not None: entry["order"] = order
+
     return get_result_keys(objects_table.insert(entry).run())
     pass
 
-def load_uefi_capsule(firmware_id, data, object_id= None):
+def load_uefi_capsule(firmware_id, data, guid=None, order=None, object_id= None):
     object_id = firmware_id if object_id is None else object_id
     capsule = uefi.FirmwareCapsule(data)
     if not capsule.valid_header:
@@ -233,7 +238,7 @@ def load_uefi_capsule(firmware_id, data, object_id= None):
     #    return None
 
     ### Create the parent object
-    if not objects_table.get_all(object_id, index="object_id").is_empty().run():
+    if not args.force and not objects_table.get_all(object_id, index="object_id").is_empty().run():
         print "Firmware capsule object (%s) exists." % object_id
         primary = objects_table.get_all(object_id, index="object_id").limit(1).pluck("id").coerce_to('array').run()[0]["id"]
         return [primary]
@@ -257,6 +262,9 @@ def load_uefi_capsule(firmware_id, data, object_id= None):
         ### Todo: store capsule-specific attributes
     }
 
+    if guid is not None: entry["guid"] = guid
+    if order is not None: entry["order"] = order
+
     ### Not storing capsule content (yet), may be too much data.
     #return [object_id]
     return get_result_keys(objects_table.insert(entry).run())
@@ -271,7 +279,7 @@ def load_pfs(firmware_id, data):
     pfs.process()
 
     ### Store PFS info
-    if not objects_table.get_all(firmware_id, index="object_id").is_empty().run():
+    if not args.force and not objects_table.get_all(firmware_id, index="object_id").is_empty().run():
         print "PFS object (%s) exists." % firmware_id
         return
 
@@ -288,28 +296,27 @@ def load_pfs(firmware_id, data):
 
         section_id = get_firmware_id(section_info["content"])
         section_info["object_id"] = section_id
-        #section_info["chunks"] = [base64.b64encode(chunk) for chunk in section_info["chunks"]]
 
-        for chunk in section_info["chunks"]:
-            store_content(firmware_id, section_id, chunk, content_type= "pfs_chunk")
+        #for chunk in section_info["chunks"]:
+        #    store_content(firmware_id, section_id, chunk, content_type= "pfs_chunk")
 
+        object_keys = []
         if section_info["guid"] == PFS_GUIDS["FIRMWARE_VOLUMES"]:
             ### Brute search for volumes here
-            object_keys = []
             volumes = search_firmware_volumes(section_info["content"])
             print volumes
-            for index in volumes:
-                volume_keys = load_uefi_volume(firmware_id, section_info["content"][index-40:], generate_object_id= True)
+            for i, index in enumerate(volumes):
+                volume_keys = load_uefi_volume(firmware_id, section_info["content"][index-40:], 
+                    guid= section_info["guid"], order= i, generate_object_id= True)
                 if volume_keys is not None:
                     object_keys += volume_keys
         else:
             object_keys = store_object(firmware_id, section_info, object_type= "pfs_section")
-
+            
         if object_keys is not None:
             child_ids += object_keys
 
         print "Stored PFS section (%s) GUID %s." % (firmware_id, section_info["guid"])
-        #load_uefi_volumes(section_id, section_info["content"])
 
     objects_table.insert({
         "firmware_id": firmware_id,
@@ -360,6 +367,7 @@ if __name__ == "__main__":
     parser.add_argument("--me", action="store_true", default=False, help="This is an Intel ME container.")
     parser.add_argument("--capsule", action= "store_true", default= False, help= "This is a UEFI firmware capsule.")
     parser.add_argument("-i", "--item", default= None, help= "Set the update with this item_id to the firmware_id.")
+    parser.add_argument("-f", "--force", default= False, action="store_true", help= "Force the update")
     parser.add_argument("file", help="The file to work on")
 
     args = parser.parse_args()

@@ -1,9 +1,10 @@
 require 'rethinkdb'
 require "base64"
 
+### Remove later, abstract DB accesses to DbController
 include RethinkDB::Shortcuts
 
-class ExplorerController < ApplicationController
+class ExplorerController < DbController
   before_filter :db_connect
 
   #def initialize
@@ -16,7 +17,6 @@ class ExplorerController < ApplicationController
 
   def explorer
     ### There is nothing on this page for now
-
   end
 
   def products
@@ -36,18 +36,7 @@ class ExplorerController < ApplicationController
         end
         ### Add the version/date/vendor
         add_object_stats!(doc, false)
-        @products[product].push({
-          :name => doc["name"], 
-          :version => doc["version"], 
-          :date => doc["date"], 
-          :vendor => doc["vendor"], 
-          :item_id => doc["item_id"],
-          :firmware_id => doc["firmware_id"],
-          :size => doc["size"],
-          :status => doc["attrs"]["status"],
-          :load_change => if doc.has_key?("load_change") then doc["load_change"] else {} end,
-          :stats => doc["stats"]
-        })
+        @products[product].push(update_dict(doc))
       end
     end
     
@@ -131,45 +120,49 @@ class ExplorerController < ApplicationController
     @firmware_object = {}
 
     ### Get the base firmware object
+    ### Todo: pluck from updates: .pluck("date", "attrs", "item_id", "name", "vendor", "version")
     cursor = @objects_table.get_all(@object_id, :index => "object_id").eq_join(
       'firmware_id', @updates_table, :index => "firmware_id"
-      ).order_by(r.desc(lambda {|doc| doc[:size]})).limit(1).zip.run
+      ).order_by(r.desc(lambda {|doc| doc[:size]})).limit(1).run
 
     cursor.each do |obj|
-      @firmware_id = obj["firmware_id"]
-      @firmware_object = get_object_info(obj)
+      obj["right"].each do |key, value|
+        if not ["load_meta", "load_change"].include?(key) then obj["left"][key] = value end
+      end
+      puts obj["left"]["firmware_id"]
+      @firmware_id = obj["left"]["firmware_id"]
+      @firmware_object = get_object_info(obj["left"])
     end
 
     ### Keep a hash of child_id -> object id
     child_map = {}
-    child_ids = @firmware_object["children"].dup
-    child_ids.each {|id| child_map[id] = @firmware_object}
+    child_ids = []
+    if @firmware_object.has_key? ("children")
+      child_ids = @firmware_object["children"].dup
+      child_ids.each {|id| child_map[id] = @firmware_object}
+    end
     @firmware_object["objects"] = []
 
     ### Embedded object may paginate better
-    if @firmware_object["firmware_id"] != @firmware_object["object_id"]
-      @depth += 1
-    end
+    if @firmware_object["firmware_id"] != @firmware_object["object_id"] then @depth += 1 end
 
     ### Get the children objects
     depth_index = 0
     while child_ids.length > 0 and depth_index < @depth
       depth_index += 1
       cursor = @objects_table.get_all(*child_ids).
-        map{|doc|
-          r.branch(
-            doc.has_fields([:guid]),
-            doc.merge({
-              ### Add in map-reduces
-              "shared" => @stats_table.get_all(["uefi_guid", doc[:guid]], :index => "type_key").pluck("result").coerce_to('array'),
-              "matches" => @stats_table.get_all(["object_id", doc[:object_id]], :index => "type_key").pluck("result").coerce_to('array'),
-              "lookup" => @lookup_table.get_all(doc[:guid], :index => "guid").coerce_to("array")
-            }),
-            doc.merge({})
-        )}.map{|doc|
-          doc.merge({
-            "content" => @content_table.get_all(doc["object_id"], :index => "object_id").pluck("attrs", "load_meta").coerce_to("array")
-        })}.order_by(r.desc(lambda {|doc| doc[:size]})).run
+        #### TESTING
+        limit(20).
+        #### END TESTING
+        map{|doc| r.branch(doc.has_fields([:guid]), doc.merge({
+          ### Add in map-reduces
+          "shared" => @stats_table.get_all(["uefi_guid", doc[:guid]], :index => "type_key").pluck("result").coerce_to('array'),
+          "matches" => @stats_table.get_all(["object_id", doc[:object_id]], :index => "type_key").pluck("result").coerce_to('array'),
+          "lookup" => @lookup_table.get_all(doc[:guid], :index => "guid").coerce_to("array")
+        }), doc.merge({})
+      )}.map{|doc|doc.merge({
+        "content" => @content_table.get_all(doc["object_id"], :index => "object_id").pluck("attrs", "load_meta").coerce_to("array")
+      })}.order_by(r.desc(lambda {|doc| doc[:size]})).run
 
       child_ids = []
       cursor.each do |obj|
@@ -184,7 +177,14 @@ class ExplorerController < ApplicationController
       end
     end
 
+    @changed = []
     @objects = @firmware_object["objects"]
+    @objects.each do |obj|
+      if obj.has_key?("load_change") and obj["load_change"]["change_score"] > 32
+        @changed.push(obj)
+      end
+    end
+
     @objects = @objects.paginate(:page => params[:page], :per_page => 30)
 
   end
@@ -224,112 +224,6 @@ class ExplorerController < ApplicationController
 
   end
 
-private
-  def db_connect
-  	r.connect(:host => "localhost").repl
-    @db = r.db("uefi")
-    @objects_table = r.db("uefi").table("objects")
-    @stats_table   = r.db("uefi").table("stats")
-    @updates_table = r.db("uefi").table("updates")
-    @content_table = r.db("uefi").table("content")
-    @lookup_table  = r.db("uefi").table("lookup")
-  end
 
-  def object_stats! (_obj)
-
-  end
-
-  def percent_change (_obj)
-    size = _obj.has_key?("size") ? _obj["size"] : _obj["attrs"]["size"]
-    score = _obj["load_change"]["change_score"]
-    return (score/(size * 1.0))*100
-  end
-
-  def lookups
-    if @lookups != nil then return @lookups end
-
-    ### Search for optional lookup values which better describe each file
-    @lookups = {}
-    cursor = r.db("uefi").table("lookup").run
-    cursor.each{ |lookup| @lookups[lookup["guid"]] = lookup }
-    return @lookups
-  end
-
-  def add_object_stats! (obj, attrs = true, meta = true)
-    obj["stats"] = {}
-    if attrs then obj["stats"] = obj["attrs"] end
-    if meta and obj.has_key?("content") and obj["content"].length > 0
-      if obj["content"][0].has_key?("load_meta")
-        #obj["stats"]["Magic"] = obj["content"][0]["load_meta"]["magic"]
-        obj["load_meta"] = obj["content"][0]["load_meta"]
-        #obj["stats"].merge(obj["content"][0]["load_meta"]) 
-      end
-    end
-
-    if obj.has_key? ("load_change")
-      if obj["load_change"].has_key? ("change_score") and obj["load_change"]["change_score"] > 0
-        obj["stats"]["Changed"] = "%d bytes, %.2f%%" % [obj["load_change"]["change_score"], percent_change(obj)]
-      end
-      if obj["load_change"].has_key? ("new_file")
-        obj["stats"]["New File"] = true
-      end
-    end
-  end
-
-  def add_lookups! (_obj)
-    lookups = lookups()
-    if lookups.has_key?(_obj["guid"])
-      lookups[_obj["guid"]].each do |key, value|
-        next if ["guid", "id"].include?(key)
-        _obj[key] = "*%s" % value
-      end
-    end
-  end
-
-  def get_object_info(_obj)
-    ### Requires: firmware_id, children, attrs
-    #@firmware_id = obj["firmware_id"]
-    add_lookups!(_obj)
-    add_object_stats!(_obj, attrs = false, meta = true)
-
-    ### This is a different type of stats
-    objects_count = if _obj.has_key?("children") then _obj["children"].length else 0 end
-    unless objects_count == 0
-      _obj["stats"]["Children"] = objects_count
-    end
-
-    ### Handle various lookups data from lookup table
-    if _obj.has_key?("lookup") and _obj["lookup"].length > 0
-      if _obj["lookup"][0].has_key?("guid_name") then _obj["guid_name"] = _obj["lookup"][0]["guid_name"] end
-    end
-
-    unless _obj.has_key?("attrs")
-      _obj["attrs"] = {}
-    end
-
-    if _obj["type"] == "uefi_file"
-      _obj["info"] = {
-        #"Attrs" => _obj["attrs"]["attributes"],
-        "FileType" => _obj["attrs"]["type_name"],
-      }
-
-      ### Requires a map-reduce
-      unless _obj["shared"].length == 0
-        _obj["stats"]["Shared"] = _obj["shared"][0]["result"]
-      end
-      unless _obj["matches"].length == 0
-        _obj["stats"]["Matches"] = _obj["matches"][0]["result"]
-      end
-
-    else
-      if _obj.has_key?("attrs") and _obj["attrs"].has_key?("type_name")
-        _obj["info"] = {
-          "SectionType" => _obj["attrs"]["type_name"]
-        }
-      end
-    end
-
-    return _obj
-  end
 
 end

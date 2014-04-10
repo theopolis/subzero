@@ -42,37 +42,15 @@
         - updates = @products[name]
         - product_index += 1
         - last_update = 0
-        %tr
-          %td= product_index
-          %td= updates[0][:vendor]
-          %td
-            .pull-left
-              %a{ "data-toggle" => "collapse", "data-target" => "#product#{product_index}"}
-                = name
-            .pull-right 
-              >
-          %td= updates.length
-          %td= Time.at(updates[0][:date])
-          %td= Time.at(updates[-1][:date])
-          %td
-            = (updates[0][:date] - updates[-1][:date])/(60*60)
-            hours
-          %td 
-          %td= updates[0][:item_id]
-          %td
-        %tr
-          %td{ :colspan => "10", :style => "padding: 0px; padding-right: 0px !important" }
-            .collapse.no-transition{ :id => "product#{product_index}"}
-              %table.table.table-bordered.tabl-hover{ :style => "margin-bottom: 0px" }
-                %tbody
-                  - updates.each do |update|
-                    %tr
-                      = render "update", :firmware => update, :last_update => last_update
-                    - delta = if last_update != 0 then (update[:date] - last_update)/(60*60)*-1 else 0 end
-                    - last_update = update[:date]
-                    - update_formatted = Time.at(update[:date]).strftime("%d %b %Y")
-                    - if update[:load_change].has_key?("change_score")
-                      - times_json += "{\"Name\": \"#{name}\", \"Version\": \"#{update[:version]}\", \"Change\": #{update[:load_change]['change_score']}, \"Time\": \"#{update_formatted}\", \"Delta\": #{delta}}, "
+        = render "product", :name => name, :updates => updates, :product_index => product_index, :last_update =>last_update 
+
+        - updates.each do |update|
+          - delta = if last_update != 0 then (update[:date] - last_update)/(60*60)*-1 else 0 end
+          - last_update = update[:date]
+          - update_formatted = Time.at(update[:date]).strftime("%d %b %Y")
+          - if update[:load_change].has_key?("change_score")
+            - times_json += "{\"Name\": \"#{name}\", \"Version\": \"#{update[:version]}\", \"Change\": #{update[:load_change]['change_score']}, \"Time\": \"#{update_formatted}\", \"Delta\": #{delta}}, "
+
         - freq = updates.map{|x| (x[:date]-updates[-1][:date])/(60*60)}.compact
         - freqs_json += "{\"Name\": \"#{name}\", \"Change\": #{(freq.sum/freq.size)/updates.size}, \"Count\": #{updates.size} }, "
 

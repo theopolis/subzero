@@ -4,10 +4,11 @@ import base64
 import hashlib
 import pydeep
 import magic
+import pefile
 
 import rethinkdb as r
 
-from utils import red
+from utils import red, blue
 
 # Testing
 from fv_fileoutput import file_compare
@@ -52,24 +53,30 @@ class Controller(object):
         added_objects_score = 0
 
         ### Assemble GUID pairs
-        children1 = {}
-        children2 = {}
-        child_cursor = db.table("objects").get_all(*(list1 + list2)).pluck("id", "size", "object_id", "guid", "children").run()
+        children1, children2 = {}, {}
+        child_cursor = db.table("objects").get_all(*(list1 + list2)).\
+            pluck("id", "size", "object_id", "guid", "children", "order").\
+            order_by("order").run()
 
+        has_child = False
         for i, child in enumerate(child_cursor):
+            if child["id"] == "4ae16769-cef1-44ec-97d7-13d6d59fdd21":
+                has_child = True
             if "guid" not in child:
                 child["guid"] = i
             if child["id"] in list1:
-                if child["guid"] not in children1: children1[child["guid"]] = []
+                if child["guid"] not in children1: 
+                    children1[child["guid"]] = []
                 children1[child["guid"]].append(child)
-            else: 
-                if child["guid"] not in children2: children2[child["guid"]] = []
+            if child["id"] in list2: 
+                if child["guid"] not in children2: 
+                    children2[child["guid"]] = []
                 children2[child["guid"]].append(child)
 
-        objects1 = []
-        objects2 = []
+        objects1, objects2 = [], []
         for guid in children2.keys():
             if guid not in children1:
+                print "added guid %s" % guid
                 ### This guid/object was added in the update
                 added_objects += [c["object_id"] for c in children2[guid]]
                 added_objects_score += sum([int(c["size"]) for c in children2[guid]])
@@ -78,21 +85,23 @@ class Controller(object):
             for i in xrange(len(children2[guid])):
                 if "children" in children2[guid][i] and len(children2[guid][i]["children"]) > 0:
                     ### There are nested children, compare them individually.
-                    #print "comparing children"
                     if len(children1[guid]) <= i:
+                        ### There are less grandchildren in the previous update (for this child guid)
                         child_ids = db.table("objects").get_all(*children2[guid][i]["children"]).pluck("object_id").run()
                         change_score += int(children2[guid][i]["size"])
                         added_objects += [child["object_id"] for child in child_ids]
                         added_objects_score += int(children2[guid][i]["size"])
                     else:
+                        #print red("will compare grandchildren lengths %d %d for guid %s, index %d" % (
+                        #    len(children1[guid][i]["children"]), len(children2[guid][i]["children"]), guid, i
+                        #    ))
                         nested_change = self._compare_children(db, children1[guid][i]["children"], children2[guid][i]["children"], save= save)
-                        #print "finished"
+                        #print blue("change %s" % str(nested_change))
                         change_score += nested_change[0]
                         added_objects += nested_change[1]
                         added_objects_score += nested_change[2]
 
                     if save:
-                        #print children2[guid][i]["id"]
                         db.table("objects").get(children2[guid][i]["id"]).update({
                             "load_change": {
                                 "change_score": nested_change[0],
@@ -102,33 +111,52 @@ class Controller(object):
                         }).run()
 
                     continue
-                #if children1[guid][i]["object_id"] == children2[guid][i]["object_id"]:
-                #    continue
-                if len(children1[guid]) <= i:
+                elif len(children1[guid]) <= i:
                     added_objects.append(children2[guid][i]["object_id"])
                     added_objects_score += int(children2[guid][i]["size"])
                     change_score += int(children2[guid][i]["size"])
                 else:
-                    objects1.append(children1[guid][i]["object_id"])
-                    objects2.append(children2[guid][i]["object_id"])
+                    objects1.append(children1[guid][i]) # ["object_id"]
+                    objects2.append(children2[guid][i]) # ["object_id"]
 
         ### If there are objects, compare the content
-        content1 = []
-        content2 = []
-
+        content1, content2 = [], []
         if len(objects1) + len(objects2) > 0:
-            content_cursor = db.table("content").get_all(*(objects1 + objects2), 
-                index= "object_id").order_by("size").pluck("object_id", "content", "size").run()
+            content_cursor = db.table("content").\
+                get_all(*([o["object_id"] for o in objects1] + [o["object_id"] for o in objects2]), 
+                index= "object_id").order_by("size").pluck("object_id", "content", "size", "children").run()
             
             for content in content_cursor:
-                if content["object_id"] in objects1: 
+                if content["object_id"] in [o["object_id"] for o in objects1]: 
                     content1.append(content)
-                if content["object_id"] in objects2:
+                if content["object_id"] in [o["object_id"] for o in objects2]:
                     content2.append(content)
 
+            #print len(objects1), len(objects2), len(content1), len(content2)
+            ids1, ids2 = {o["object_id"]: o["id"] for o in objects1}, {o["object_id"]: o["id"] for o in objects2}
             for i in xrange(len(content2)):
-                change = _object_compare(content1[i]["content"], content2[i]["content"])
-                change_score += change
+                if len(content1) <= i:
+                    content_change_score = int(content2[i]["size"])
+                    content_added_objects = [content2[i]["object_id"]]
+                    content_added_objects_score += int(content2[i]["size"])
+                else:
+                    change = _object_compare(content1[i]["content"], content2[i]["content"])
+                    content_added_objects = []
+                    content_added_objects_score = 0
+                    content_change_score = change
+
+                change_score += content_change_score
+                added_objects += content_added_objects
+                added_objects_score += content_added_objects_score
+                
+                if save and ("children" not in content2[i] or len(content2[i]["children"]) == 0):
+                    db.table("objects").get(ids2[content2[i]["object_id"]]).update({
+                        "load_change": {
+                            "change_score": content_change_score,
+                            "new_files": content_added_objects,
+                            "new_files_score": content_added_objects_score
+                        }
+                    }).run()
 
         #print guid, change_score, len(added_objects)
         return (change_score, added_objects, added_objects_score)
@@ -152,14 +180,16 @@ class Controller(object):
                 "load_change": {
                     "change_score": change[0],
                     "new_files": change[1],
-                    "new_files_score": change[2]
+                    "new_files_score": change[2],
+                    "delta": firmware2[4] - firmware1[4]
                 }
             }).run()
             db.table("objects").get_all(firmware2[1], index= "object_id").update({
                 "load_change": {
                     "change_score": change[0],
                     "new_files": change[1],
-                    "new_files_score": change[2]
+                    "new_files_score": change[2],
+                    "delta": firmware2[4] - firmware1[4]
                 }
             }).run()
         print "Firmware %s change: %s" % (firmware2[1], str(change))
@@ -167,24 +197,46 @@ class Controller(object):
 
     def _load_meta(self, db, _object):
         content = base64.b64decode(_object["content"])
-        #print _object["firmware_id"]
-        db.table("content").get(_object["id"]).update({
-            "load_meta": {
-                "magic":  magic.from_buffer(content),
-                "ssdeep": pydeep.hash_buf(content),
-                "md5":    hashlib.md5(content).hexdigest(),
-                "sha1":   hashlib.sha1(content).hexdigest(),
-                "sha256": hashlib.sha256(content).hexdigest()
-            }
-        }).run()
+        entry = {
+            "magic":  magic.from_buffer(content),
+            "ssdeep": pydeep.hash_buf(content),
+            "md5":    hashlib.md5(content).hexdigest(),
+            "sha1":   hashlib.sha1(content).hexdigest(),
+            "sha256": hashlib.sha256(content).hexdigest()
+        }
+
+        if entry["magic"] == "MS-DOS executable":
+            ### This is a weak application of magic
+            try: 
+                pe_data = self._get_pe(content)
+                for k, v in pe_data.iteritems(): entry[k] = v
+            except Exception, e: print e; pass 
+            pass
+
+        db.table("content").get(_object["id"]).update({"load_meta": entry}).run()
         print "Loaded meta for object (%s) %s." % (_object["firmware_id"], _object["id"])
+        pass
+
+    def _get_pe(self, content):
+        def section_name(s): return s.Name.replace("\x00", "").strip()
+        pe_entry = {}
+        pe = pefile.PE(data= content)
+        pe_entry["machine_type"] = pe.FILE_HEADER.Machine
+        pe_entry["compile_time"] = pe.FILE_HEADER.TimeDateStamp
+        pe_entry["sections"] = [section_name(s) for s in pe.sections if len(section_name(s)) > 0]
+        pe_entry["linker"] = "%d,%d" % (pe.OPTIONAL_HEADER.MajorLinkerVersion, pe.OPTIONAL_HEADER.MinorLinkerVersion)
+        pe_entry["os_version"] = "%d,%d" % (pe.OPTIONAL_HEADER.MajorOperatingSystemVersion, pe.OPTIONAL_HEADER.MinorOperatingSystemVersion)
+        pe_entry["image_version"] = "%d,%d" % (pe.OPTIONAL_HEADER.MajorImageVersion, pe.OPTIONAL_HEADER.MinorImageVersion)
+        pe_entry["subsystem"] = pe.OPTIONAL_HEADER.Subsystem
+        pe_entry["subsystem_version"] = "%d,%d" % (pe.OPTIONAL_HEADER.MajorSubsystemVersion, pe.OPTIONAL_HEADER.MinorSubsystemVersion)
+        
+        return pe_entry
         pass
 
     def _load_children(self, db, children):
         child_objects = db.table("objects").get_all(*children).pluck("id", "object_id", "load_meta", "children").run()
         for child in child_objects:
             if "children" in child and len(child["children"]) > 0:
-                #for child_key in child_object["children"]:
                 self._load_children(db, child["children"])
                 continue
 
@@ -196,7 +248,7 @@ class Controller(object):
 
     def _get_product_updates(self, db, product):
         updates = db.table("updates").order_by("date").filter(lambda update:
-                update["products"].contains(product)
+                update["products"].contains(product) & update.has_fields("firmware_id")
             ).map(r.row.merge({ "object_id": r.row["firmware_id"] })).eq_join("object_id", 
                 db.table("objects"), index= "object_id"
             ).zip().run()
@@ -243,7 +295,7 @@ class Controller(object):
             firmware_objects = []
 
             for update in updates:
-                firmware_objects.append((update["version"], update["firmware_id"], update["children"], "load_change" in update))
+                firmware_objects.append((update["version"], update["firmware_id"], update["children"], "load_change" in update, update["date"]))
 
             for i in xrange(len(firmware_objects)-1):
                 if not args.force and firmware_objects[i+1][3]:
@@ -315,10 +367,10 @@ def main():
     group.add_argument("--vendor", help="Vendor to load.")
 
     parser_add_lookup = subparsers.add_parser("add_lookup", help= "Add metadata about a file GUID.")
+    parser_add_lookup.add_argument("-f", "--force", default=False, action= "store_true", help= "Force the lookup insert.")
     parser_add_lookup.add_argument("guid", help= "File GUID")
     parser_add_lookup.add_argument("name", help="Key to add to the GUID.")
     parser_add_lookup.add_argument("value", help= "Value")
-    parser_add_lookup.add_argument("-f", "--force", default=False, action= "store_true", help= "Force the lookup insert.")
 
     parser_load_guids = subparsers.add_parser("load_guids", help= "Read in EFI GUID definitions.")
     parser_load_guids.add_argument("-f", "--force", default= False, action= "store_true", help= "Override existing DB GUID definitions.")

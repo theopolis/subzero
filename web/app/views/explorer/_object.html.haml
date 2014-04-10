@@ -1,3 +1,6 @@
+-# base = (just print the base object, no children)
+-# independent = (this is not linked to an explorer view)
+-# source = (this is a source object with unlinkable children)
 %tr
   %td 
     %div
@@ -6,22 +9,30 @@
       - if source
         %a{ :href => "/explorer/firmware/#{obj["object_id"]}/" }
           - unless obj.has_key?("guid")
-            #{obj["object_id"]}
+            .guid= obj["object_id"]
           - else
-            #{obj["guid"]}
-      - else
-        #{obj["object_id"]}
-      - if obj.has_key?("guid_name")
+            .guid= obj["guid"]
+      - elsif independent
+        .guid
+          %a{ :href => "/explorer/firmware/#{obj["object_id"]}/"}
+            = obj["object_id"]
         %div
           %small
-            = obj["guid_name"]
+            FirmwareID:
+            %a{ :href => "/explorer/firmware/#{obj["firmware_id"]}/"}
+              = obj["firmware_id"]
+      - else
+        .guid= obj["object_id"]
+      - if obj.has_key?("guid_name")
+        %div
+          %small= obj["guid_name"]
   %td
     - if source == false and obj.has_key?("load_meta")
       #{obj["load_meta"]["magic"]}
     - else
       %small
         #{obj["vendor"]}
-        - if source == true
+        - if source == true or independent == true
           (#{obj["type"]})
   %td
     - if obj["attrs"].has_key?("name")
@@ -33,7 +44,7 @@
         %b= key
         %small= value
     - if obj.has_key?("load_meta")
-      - if source == true
+      - if source == true or independent == true
         %div
           %small (#{obj["load_meta"]["magic"]})
     -# obj["objects"].each do |sub_obj|
@@ -47,7 +58,7 @@
         - if key == "Changed"
           %br
   %td 
-- if obj.has_key?("objects")
+- if obj.has_key?("objects") and base == false
 
   - obj["objects"].each do |child|
-    = render("object", :obj => child, :source => false)
+    = render("object", :obj => child, :source => false, :independent => independent, :base => false)

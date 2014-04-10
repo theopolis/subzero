@@ -28,10 +28,12 @@ db_cmd(uefi.table("updates").index_create("date"))
 db_cmd(uefi.table("objects").index_create("firmware_id"))
 db_cmd(uefi.table("objects").index_create("object_id"))
 db_cmd(uefi.table("objects").index_create("guid"))
+db_cmd(uefi.table("objects").index_create("size"))
 
 db_cmd(uefi.table("content").index_create("firmware_id"))
 db_cmd(uefi.table("content").index_create("object_id"))
 db_cmd(uefi.table("content").index_create("guid"))
+db_cmd(uefi.table("content").index_create("size"))
 
 db_cmd(uefi.table("stats").index_create("key"))
 db_cmd(uefi.table("stats").index_create("type"))

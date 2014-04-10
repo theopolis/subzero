@@ -1,0 +1,22 @@
+- content_for :title do
+  Analysis - GUID
+
+%h3
+  Subzero GUID:
+  %a{ :href => "/analysis/guid/#{@guid}/"}
+    .guid= @guid
+
+.container
+  .row
+    %table.table.table-bordered.table-striped.table-hover
+      %thead
+        %tr
+          %th ObjectID
+          %th Type
+          %th Info
+          %th Size
+          %th Stats
+          %th Actions
+      %tbody
+      - @objects.each do |obj|
+        = render :partial => "explorer/object", :locals => { :obj => obj, :source => false, :independent => true, :base => false }

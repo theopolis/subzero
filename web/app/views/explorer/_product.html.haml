@@ -1,0 +1,27 @@
+
+%tr
+  %td= product_index
+  %td= updates[0][:vendor]
+  %td
+    .pull-left
+      %a{ "data-toggle" => "collapse", "data-target" => "#product#{product_index}"}
+        = name
+    .pull-right 
+      >
+  %td= updates.length
+  %td= Time.at(updates[-1][:date])
+  %td= Time.at(updates[0][:date])
+  %td
+    = (updates[0][:date] - updates[-1][:date])/(60*60)
+    hours
+  %td 
+  %td= updates[0][:item_id]
+  %td
+%tr
+  %td{ :colspan => "10", :style => "padding: 0px; padding-right: 0px !important" }
+    .collapse.no-transition{ :id => "product#{product_index}"}
+      %table.table.table-bordered.tabl-hover{ :style => "margin-bottom: 0px" }
+        %tbody
+          - updates.each do |update|
+            %tr
+              = render "update", :firmware => update, :last_update => last_update

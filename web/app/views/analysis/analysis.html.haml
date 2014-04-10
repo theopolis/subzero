@@ -1,0 +1,30 @@
+- content_for :title do
+  Analysis
+
+%h3
+  %div Subzero Analysis
+
+.container
+  .row
+    .col-md-6
+      %h4 Top UEFI GUIDs (count)
+      %table
+        - @guids.each do |guid|
+          %tr
+            %td
+              %b= guid["result"]
+            %td
+              .guid= guid["key"]
+            %td #{guid["guid_name"]}
+    .col-md-6
+      %h4 Top UEFI GUIDs (size)
+      %table
+        - @guids_size.each do |guid|
+          %tr
+            %td
+              %b= guid["size"]
+            %td
+              .guid= guid["guid"]
+
+  .row
+    .col-md-6
