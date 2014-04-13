@@ -1,6 +1,8 @@
 
 %tr
-  %td= firmware[:importance]
+  %td
+    %i.fa.fa-unlock-alt.text-warning
+    = firmware[:importance]
   %td= firmware[:item_id]
   %td= firmware[:version]
   %td= firmware[:name]
@@ -24,4 +26,6 @@
   %td
     %a{:href => "/explorer/firmware/#{firmware[:firmware_id]}"}
       .guid= firmware[:firmware_id]
-  %td= firmware[:status]
+  %td
+    %i.fa.fa-bug.text-muted
+    = firmware[:status]

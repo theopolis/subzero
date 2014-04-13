@@ -20,3 +20,5 @@
       %tbody
       - @objects.each do |obj|
         = render :partial => "explorer/object", :locals => { :obj => obj, :source => false, :independent => true, :base => false }
+
+    = will_paginate @objects  

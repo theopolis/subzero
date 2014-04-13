@@ -26,4 +26,11 @@ RailsBootstrap::Application.routes.draw do
   get 'analysis/guids' => "analysis#guids"
   get 'analysis/guid/:id' => "analysis#guid"
   get 'analysis/keywords' => "analysis#keywords"
+  get 'analysis/vulnerabilities' => "analysis#vulnerabilities"
+  get 'analysis/trusted' => "analysis#trusted"
+  get 'analysis/similarities' => "analysis#similarities"
+
+
+  ### Malware/Submit
+  get 'submit' => "submit#submit"
 end

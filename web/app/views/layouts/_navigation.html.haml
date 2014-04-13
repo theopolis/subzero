@@ -11,3 +11,7 @@
     .collapse.navbar-collapse
       %ul.nav.navbar-nav
         = render 'layouts/navigation_links'
+    .collapse.navbar-collapse
+      %ul.nav.navbar-nav
+        - menu_items.each do | link |
+          %li= link_to link[0], link[1]

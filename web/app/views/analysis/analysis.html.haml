@@ -28,3 +28,17 @@
 
   .row
     .col-md-6
+      %h4 Fastest Updates
+      %table
+        - @fast_updates.each do |update|
+          %tr
+            %td= update["item_id"]
+            %td= update["load_change"]
+
+    .col-md-6
+      %h4 Smallest Updates
+      %table
+        - @small_updates.each do |update|
+          %tr
+            %td= update["item_id"]
+            %td= update["load_change"]

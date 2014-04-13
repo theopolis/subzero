@@ -48,6 +48,19 @@ class Controller(object):
             }
         )
 
+    def command_vendor_updates_count(self, db, args):
+        db.table("stats").get_all("vendor_update_count", index= "type").delete().run()
+        return db.table("updates").group_by("vendor", r.count).with_fields("reduction", {"group": "vendor"}).map(lambda guid:
+            {
+                "key": guid["group"]["vendor"], 
+                "date": r.now().to_epoch_time(), 
+                "type": "vendor_update_count", 
+                "result": guid["reduction"]
+            }
+        )
+
+
+
 def main():
 
     argparser = argparse.ArgumentParser()
@@ -55,8 +68,12 @@ def main():
 
     parser_guid_group = subparsers.add_parser("guid_group", help= "Groupby UEFI file GUIDs.")
     parser_object_group = subparsers.add_parser("object_group", help= "Groupby Object hashs.")
+    
     parser_vendor_object_sum = subparsers.add_parser("vendor_object_sum", help= "Sum objects by vendor.")
     parser_vendor_content_sum = subparsers.add_parser("vendor_content_sum", help= "Sum content by vendor.")
+
+    parser_vendor_update_count = subparsers.add_parser("vendor_update_sum", help= "Count updates by vendor.")
+    parser_vendor_products_count = subparsers.add_parser("vendor_product_sum", help= "Count products by vendor.")
 
     args = argparser.parse_args()
     controller = Controller()

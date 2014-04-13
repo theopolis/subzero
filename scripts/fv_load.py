@@ -38,7 +38,7 @@ def get_file_description(_object):
             return description
     return None 
 
-def get_files(objects):
+def get_files(objects, measured= False):
     ### They may be duplicate file-GUIDs in a volume/capsule/etc.
     #files = {}
     files = []
@@ -51,14 +51,18 @@ def get_files(objects):
                 "attrs": dict(_object["attrs"].items() + {
                     "name": get_file_name(_object),
                     "description": get_file_description(_object),
+                    "measured": measured
                     }.items()
                 ),
                 "objects": _object["objects"],
                 "content": _object["content"],
-                "guid": _object["guid"]
+                "guid": _object["guid"],
             })
         if "objects" in _object:
-            for uefi_file in get_files(_object["objects"]):
+            object_attrs = getattr(_object, "attrs", None)
+            if type(object_attrs) == dict and "attrs" in object_attrs:
+                measured = (object_attrs == GuidDefinedSection.ATTR_AUTH_STATUS_VALID)
+            for uefi_file in get_files(_object["objects"], measured= measured):
                 files.append(uefi_file)
     return files
 

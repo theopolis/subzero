@@ -5,11 +5,23 @@ include RethinkDB::Shortcuts
 
 class AnalysisController < DbController
   before_filter :db_connect
+  helper_method :menu_items
+
+  def menu_items
+    [
+      ['GUIDs', "/analysis/guids"],
+      ["Keywords", "/analysis/keywords"],
+      ["Vulns", "/analysis/vulnerabilities"],
+      ["Potential Vulns", "/analysis/similarities"],
+      ["Capsule Data", "/analysis/capsules"]
+    ]
+  end
 
   def analysis
+    select_limit = 5
     ### Most uses GUIDS
     @guids = []
-    cursor = @stats_table.get_all("uefi_guid", :index => "type").order_by(r.desc(:result)).limit(5).
+    cursor = @stats_table.get_all("uefi_guid", :index => "type").order_by(r.desc(:result)).limit(select_limit).
     map{|doc|
       doc.merge({
         "lookup" => @lookup_table.get_all(doc[:key], :index => "guid").coerce_to("array")
@@ -18,7 +30,7 @@ class AnalysisController < DbController
 
     ### Largest guids
     @guids_size = []
-    cursor = @objects_table.order_by(:index => r.desc(:size)).has_fields(:guid).pluck(:guid, :size).limit(5).
+    cursor = @objects_table.order_by(:index => r.desc(:size)).has_fields(:guid).pluck(:guid, :size).limit(select_limit).
     map{|doc|
       doc.merge({
         "lookup" => @lookup_table.get_all(doc[:guid], :index => "guid").coerce_to("array")
@@ -26,12 +38,21 @@ class AnalysisController < DbController
     cursor.each {|guid| @guids_size.push(flatten_lookup(guid))}
 
     ### Fastest updates, calculate the change in updates
+    @fast_updates = []
+    cursor = @updates_table.order_by(lambda {|doc| doc[:load_change][:delta]}).limit(select_limit).run
+    cursor.each {|update| @fast_updates.push(update)}
 
     ### Smallest updates, order by asc load_change->change
+    @small_updates = []
+    cursor = @updates_table.order_by(lambda {|doc| doc[:load_change][:change_score]}).limit(select_limit).run
+    cursor.each {|update| @small_updates.push(update)}
 
     ### Most common DXE
+    @dxes = []
 
     ### Most common PEIMs
+    @peims = []
+
 
   end
 
@@ -48,6 +69,7 @@ class AnalysisController < DbController
     puts @updates.length
 
     ### Trusted-compusing GUIDs
+    ### (lookup-> important(reason->trusted,security,vulnerable), references, [optional]key)
 
     ### Release notes with security, vulnerability, exploit
 
@@ -59,13 +81,17 @@ class AnalysisController < DbController
   end
 
   def vulnerabilities
-    ### Updates identified as being a vulnerability fix
+    ### Updates identified as being a vulnerability fix 
+    ### (update-> patch(notes, references, [optional]key))
 
     ### FW PEIMs/DXEs using the network
 
     ### Changes to high-profile GUIDs (and trusted computing, update-related GUIDs)
 
+  end
 
+  def trusted
+    ### List guids related to trusted computing/secure boot/key storage
   end
 
   def guids
@@ -84,16 +110,23 @@ class AnalysisController < DbController
       })
     end
 
+    @guids.sort! { |guid1, guid2| guid1[:count] <=> guid2[:count]}
+    @guids.reverse!
     puts @guids.length
   end
 
   def guid
     @guid = params[:id]
     @objects = []
-    cursor = object_query(@objects_table.get_all(@guid, :index => "guid")).run
+    cursor = object_query(@objects_table.get_all(@guid, :index => "guid").
+      ### TESTING
+      order_by(:size).limit(20)
+      ).run
     cursor.each do |obj|
       @objects.push(get_object_info(obj))
     end
+
+    @objects = @objects.paginate(:page => params[:page], :per_page => 30)
 
   end
 

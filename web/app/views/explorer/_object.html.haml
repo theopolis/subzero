@@ -4,6 +4,7 @@
 %tr
   %td 
     %div
+      %i.fa.fa-unlock-alt.text-warning
       - unless obj.has_key?("guid")
         [obj] 
       - if source
@@ -58,6 +59,9 @@
         - if key == "Changed"
           %br
   %td 
+    %i.fa.fa-bug.text-muted
+    %i.fa.fa-key.text-muted
+    %i.fa.fa-fighter-jet.text-muted
 - if obj.has_key?("objects") and base == false
 
   - obj["objects"].each do |child|
