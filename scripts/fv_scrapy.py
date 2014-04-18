@@ -68,6 +68,32 @@ Dell Spider:
   ]
 }
 
+HP Spider:
+  "binary": "", 
+  "bios_url": "http://ftp.hp.com/pub/softpaq/sp54501-55000/sp54636.exe", 
+  "importance": "Critical", 
+  "ssm": "YES", 
+  "version": "F.20 PASS1", 
+  "notes_url": "...", 
+  "attrs": {
+    "url": "...", 
+    "date": "2011-09-09", 
+    "item_id": "ob_102534_1", 
+    "name": "HP Notebook System BIOS Update"
+  }, 
+  "item_id": "ob_102534_1", 
+  "binary_name": "sp54636.exe", 
+  "compatibility": [
+    "HP ProBook 4320s Notebook PC", 
+    "HP ProBook 4321s Notebook PC", 
+    "HP ProBook 4420s Notebook PC", 
+    "HP ProBook 4421s Notebook PC"
+  ], 
+  "desc": "...",
+  "previous_versions": [[], []]
+}
+
+
 '''
 
 CACHE_TIMES = {}
@@ -79,6 +105,35 @@ def load_details(details, file_name= "None"):
     print "Warning: not attrs in details (%s)." % file_name
   update = {"item_id": details["item_id"]}
   
+  if args.type == "HP":
+    try:
+      update["products"] = [p.strip() for p in details["compatibility"]]
+    except:
+      update["products"] = ["Unknown System"]
+    update["payload_urls"] = [details["bios_url"]]
+    update["name"] = details["binary_name"]
+    update["date"] = int(datetime.strptime(details["attrs"]["date"], "%Y-%m-%d").strftime("%s"))
+    update["version"] = details["version"]
+    update["description"] = details["desc"] if "desc" in details else ""
+    update["notes_url"] = details["notes_url"]
+    update["details_url"] = details["attrs"]["url"]
+
+    update["attrs"] = {}
+    update["attrs"]["importance"] = details["importance"] if "importance" in details else "Unknown"
+    if "ssm" in details:
+      update["attrs"]["ssm"] = details["ssm"]
+    update["attrs"]["title"] = details["attrs"]["name"]
+
+    update["previous_versions"] = []
+    if "previous_versions" in details:
+      for version in details["previous_versions"]:
+        update["previous_versions"].append({
+          "version": version[0],
+          "item_id": version[2],
+          "details_url": version[1]
+        })
+    update["vendor"] = "HP"
+
   if args.type == "Dell":
     update["products"] = [p.strip() for p in details["attrs"]["compatibility"]]
     update["payload_urls"] = details["bios_urls"]

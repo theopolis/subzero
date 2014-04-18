@@ -30,6 +30,7 @@ private
       :load_change => if doc.has_key?("load_change") then doc["load_change"] else {} end,
       :stats => doc["stats"],
 
+      :actions => if doc.has_key?("actions") then doc["actions"] else nil end,
       :importance => doc["attrs"]["importance"]
     }
   end
@@ -110,6 +111,7 @@ private
     ### Handle various lookups data from lookup table
     if _obj.has_key?("lookup") and _obj["lookup"].length > 0
       if _obj["lookup"][0].has_key?("guid_name") then _obj["guid_name"] = _obj["lookup"][0]["guid_name"] end
+      if _obj["lookup"][0].has_key?("guid_actions") then _obj["guid_actions"] = _obj["lookup"][0]["guid_actions"] end
     end
 
     unless _obj.has_key?("attrs") then _obj["attrs"] = {} end

@@ -1,5 +1,8 @@
 import argparse, json, os, sys, time
 import base64
+import copy
+import gc
+import subprocess
 
 import hashlib
 import pydeep
@@ -85,21 +88,23 @@ class Controller(object):
             for i in xrange(len(children2[guid])):
                 if "children" in children2[guid][i] and len(children2[guid][i]["children"]) > 0:
                     ### There are nested children, compare them individually.
-                    if len(children1[guid]) <= i:
+                    if len(children1[guid]) <= i or "children" not in children1[guid][i]:
                         ### There are less grandchildren in the previous update (for this child guid)
                         child_ids = db.table("objects").get_all(*children2[guid][i]["children"]).pluck("object_id").run()
-                        change_score += int(children2[guid][i]["size"])
-                        added_objects += [child["object_id"] for child in child_ids]
-                        added_objects_score += int(children2[guid][i]["size"])
+                        nested_change = [
+                            int(children2[guid][i]["size"]),
+                            [child["object_id"] for child in child_ids],
+                            int(children2[guid][i]["size"])
+                        ]
                     else:
                         #print red("will compare grandchildren lengths %d %d for guid %s, index %d" % (
                         #    len(children1[guid][i]["children"]), len(children2[guid][i]["children"]), guid, i
                         #    ))
                         nested_change = self._compare_children(db, children1[guid][i]["children"], children2[guid][i]["children"], save= save)
-                        #print blue("change %s" % str(nested_change))
-                        change_score += nested_change[0]
-                        added_objects += nested_change[1]
-                        added_objects_score += nested_change[2]
+                    
+                    change_score += nested_change[0]
+                    added_objects += nested_change[1]
+                    added_objects_score += nested_change[2]
 
                     if save:
                         db.table("objects").get(children2[guid][i]["id"]).update({
@@ -138,7 +143,7 @@ class Controller(object):
                 if len(content1) <= i:
                     content_change_score = int(content2[i]["size"])
                     content_added_objects = [content2[i]["object_id"]]
-                    content_added_objects_score += int(content2[i]["size"])
+                    content_added_objects_score = int(content2[i]["size"])
                 else:
                     change = _object_compare(content1[i]["content"], content2[i]["content"])
                     content_added_objects = []
@@ -212,6 +217,10 @@ class Controller(object):
                 for k, v in pe_data.iteritems(): entry[k] = v
             except Exception, e: print e; pass 
             pass
+        #entry_copy = copy.deepcopy(entry)
+        #del entry
+        #del content
+        #gc.collect()
 
         db.table("content").get(_object["id"]).update({"load_meta": entry}).run()
         print "Loaded meta for object (%s) %s." % (_object["firmware_id"], _object["id"])
@@ -229,7 +238,8 @@ class Controller(object):
         pe_entry["image_version"] = "%d,%d" % (pe.OPTIONAL_HEADER.MajorImageVersion, pe.OPTIONAL_HEADER.MinorImageVersion)
         pe_entry["subsystem"] = pe.OPTIONAL_HEADER.Subsystem
         pe_entry["subsystem_version"] = "%d,%d" % (pe.OPTIONAL_HEADER.MajorSubsystemVersion, pe.OPTIONAL_HEADER.MinorSubsystemVersion)
-        
+        del pe
+
         return pe_entry
         pass
 
@@ -240,10 +250,15 @@ class Controller(object):
                 self._load_children(db, child["children"])
                 continue
 
-            contents = db.table("content").get_all(child["object_id"], index= "object_id").run()
+            contents = db.table("content").get_all(child["object_id"], index= "object_id").\
+                filter(not r.row.contains("load_meta")).run()
+            num = 0
             for content in contents:
+                print "%d/??" % (num),
+                num += 1
                 self._load_meta(db, content)
                 break
+            del contents
         pass
 
     def _get_product_updates(self, db, product):
@@ -266,8 +281,13 @@ class Controller(object):
                     if product not in vendor_products:
                         vendor_products.append(product)
             products = vendor_products
-        else:
-            products = [args.product]
+            ### In an effort to avoid memory exhaustion
+            for product in products:
+                print "Recalling load_meta for product %s" % product
+                subprocess.call("python %s load_meta --product \"%s\"" % (sys.argv[0], product), shell=True)
+            return
+
+        products = [args.product]
 
         for product in products:
             updates = self._get_product_updates(db, product)

@@ -9,15 +9,18 @@
     .col-md-4
       %h4 Products
       .explore-link
-        %a{ :href => "/explorer/products"} 
-          Click Me Picture
+        - @vendors.each do |vendor|
+          %div
+            %a{ :href => "/explorer/products/#{vendor[:name]}"} 
+              = vendor[:name]
+            updates: #{vendor[:count]}
     .col-md-4
       %h4 Vendors
       .explore-link
         %a{ :href => "/explorer/vendors"} 
-          Click Me Picture
+          Picture Not Found
     .col-md-4
       %h4 Objects
       .explore-link
         %a{ :href => "/explorer/objects"} 
-          Click Me Picture
+          Picture Not Found

@@ -6,7 +6,7 @@ RailsBootstrap::Application.routes.draw do
   get 'explorer' => "explorer#explorer"
 
   ### Machines/ISV/OEM views
-  get 'explorer/products' => "explorer#products"
+  get 'explorer/products/:vendor' => "explorer#products"
   get 'explorer/vendors' => "explorer#vendors"
   get 'explorer/objects' => "explorer#objects"
   get 'explorer/vendor/:name' => "explorer#vendor"
@@ -30,7 +30,9 @@ RailsBootstrap::Application.routes.draw do
   get 'analysis/trusted' => "analysis#trusted"
   get 'analysis/similarities' => "analysis#similarities"
 
-
   ### Malware/Submit
   get 'submit' => "submit#submit"
+
+  ### AJAX actions
+  post 'explorer/actions/:name' => "explorer#actions"
 end

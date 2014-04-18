@@ -1,3 +1,4 @@
+- action_classes = {"true" => "text-warning", "false" => "text-muted", "locked" => "text-danger"}
 
 %tr
   %td
@@ -27,5 +28,8 @@
     %a{:href => "/explorer/firmware/#{firmware[:firmware_id]}"}
       .guid= firmware[:firmware_id]
   %td
-    %i.fa.fa-bug.text-muted
+    - if firmware[:actions] != nil and firmware[:actions].has_key?("vulnerable") and firmware[:actions]["vulnerable"].length > 0
+      %i.fa.fa-bug.text-warning
+    - else
+      %i.fa.fa-bug.text-muted
     = firmware[:status]

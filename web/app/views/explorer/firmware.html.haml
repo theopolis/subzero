@@ -16,17 +16,14 @@
 
 .container
   .row
+    %h4 Changes
     .col-md-12
-      %table
+      %table.table.table-bordered
         - @changed.each do |obj|
-          %tr
-            %td
-              %a{ :href => "/explorer/firmware/#{obj["object_id"]}/"} 
-                = obj["guid"]
-            %td= obj["load_change"]
-            %td= obj["attrs"]
+          = render("object", :obj => obj, :source => true, :independent => false, :base => true)
 
   .row
+    %h4 Structure
     %table.table.table-bordered.table-striped.table-hover
       %thead
         %tr
@@ -45,3 +42,40 @@
           = render("object", :obj => obj, :source => true, :independent => false, :base => false)
 
     = will_paginate @objects
+
+- content_for :javascript do
+  :javascript
+    var $classes = {};
+    $classes["true"] = "text-warning";
+    $classes["false"] = "text-muted";
+    $classes["locked"] = "text-danger";
+
+    function toggle_failed(e) {
+      var $object = "none";
+    }
+
+    function toggle_callback(result) {
+      console.log(result);
+      var $object = $('.toggle-' + result["type"] + '[data-id="' + result["id"] + '"]');
+      console.log($object);
+      $object.removeClass($classes[result["previous"]]);
+      $object.addClass($classes[result["value"]]);
+      $object.attr("data-value", result["value"]);
+    }
+
+    $(".toggle").click(function(e) {
+      var $toggle = $(e.target);
+      $toggle.attr("disabled", "disabled");
+
+      var $actions = {
+        value: $toggle.attr("data-value"),
+        id: $toggle.attr("data-id"),
+        type: $toggle.attr("data-type"),
+        firmware_id: $toggle.attr("data-firmware"),
+      };
+
+      $.post( "/explorer/actions/" + $actions["type"], { actions: $actions }, toggle_callback, "json")
+        .fail(function(e) {
+          toggle_failed(e);
+        });
+    });

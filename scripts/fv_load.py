@@ -11,6 +11,7 @@ import rethinkdb as r
 from uefi_firmware import *
 from uefi_firmware.pfs import PFSFile, PFS_GUIDS
 from uefi_firmware.utils import search_firmware_volumes
+from uefi_firmware.flash import FlashDescriptor
 
 def get_file_name(_object):
     if len(_object["label"]) > 0:
@@ -59,9 +60,8 @@ def get_files(objects, measured= False):
                 "guid": _object["guid"],
             })
         if "objects" in _object:
-            object_attrs = getattr(_object, "attrs", None)
-            if type(object_attrs) == dict and "attrs" in object_attrs:
-                measured = (object_attrs == GuidDefinedSection.ATTR_AUTH_STATUS_VALID)
+            if "attrs" in _object["attrs"]:
+                measured = (_object["attrs"]["attrs"] == uefi.GuidDefinedSection.ATTR_AUTH_STATUS_VALID)
             for uefi_file in get_files(_object["objects"], measured= measured):
                 files.append(uefi_file)
     return files
@@ -110,6 +110,7 @@ def store_content(firmware_id, object_id, content, content_type= "object"):
         '''If the content entry already exists for this object_id (hash), skip inserting content.'''
         print "Skipping object content (%s) (%s), already exists." % (firmware_id, object_id)
         return
+    if args.test: return
     content_table.insert({
         "firmware_id": firmware_id,
         "object_id": object_id,
@@ -130,6 +131,8 @@ def store_object(firmware_id, _object, object_type= "uefi_object"):
     object_id = get_firmware_id(_object["content"])
     if "objects" not in _object or len(_object["objects"]) == 0:
         entry = _object_entry(_object)
+        if len(entry["guid"]) == 0:
+            del entry["guid"]
         entry["firmware_id"] = firmware_id
         entry["object_id"] = object_id
 
@@ -141,6 +144,7 @@ def store_object(firmware_id, _object, object_type= "uefi_object"):
         store_content(firmware_id, object_id, _object["content"])
    
         ### Store this entry
+        if args.test: return []
         keys = get_result_keys(objects_table.insert(entry).run())
         return keys
 
@@ -182,10 +186,10 @@ def store_file(firmware_id, uefi_file):
     entry["attrs"] = uefi_file["attrs"]
     #entry["attrs"]["name"] = uefi_file["name"]
     #entry["attrs"]["description"] = uefi_file["description"]
-
+    if args.test: return []
     keys = get_result_keys(objects_table.insert(entry).run())
     print "Stored UEFI file (%s) %s." % (firmware_id, uefi_file["guid"])
-    return keys
+    return keys, uefi_file["attrs"]["measured"]
 
 def load_uefi_volume(firmware_id, data, guid= None, order=None, generate_object_id= False):
     object_id = firmware_id #if object_id is None else object_id
@@ -202,6 +206,7 @@ def load_uefi_volume(firmware_id, data, guid= None, order=None, generate_object_
 
     if not args.force and not objects_table.get_all(object_id, index="object_id").is_empty().run():
         print "Firmware volume object (%s) exists." % object_id
+        if args.test: return []
         primary = objects_table.get_all(object_id, index="object_id").limit(1).pluck("id").coerce_to('array').run()[0]["id"]
         return [primary]
 
@@ -211,15 +216,18 @@ def load_uefi_volume(firmware_id, data, guid= None, order=None, generate_object_
 
     ### Store the volume object information
     child_ids = []
+    volume_measured = False
     for uefi_file in files:
-        child_ids += store_file(firmware_id, uefi_file)    
+        file_ids, file_measured = store_file(firmware_id, uefi_file)
+        child_ids += file_ids
+        volume_measured = volume_measured or file_measured
 
     entry = {
         "firmware_id": firmware_id,
         "object_id": object_id,
         "children": child_ids,
-        ### Store size, type, attrs
         "type": "uefi_volume",
+        "measured": volume_measured,
         "size": len(data)
         ### Todo: store volume-specific attributes
     }
@@ -227,6 +235,7 @@ def load_uefi_volume(firmware_id, data, guid= None, order=None, generate_object_
     if guid is not None: entry["guid"] = guid
     if order is not None: entry["order"] = order
 
+    if args.test: return []
     return get_result_keys(objects_table.insert(entry).run())
     pass
 
@@ -244,6 +253,7 @@ def load_uefi_capsule(firmware_id, data, guid=None, order=None, object_id= None)
     ### Create the parent object
     if not args.force and not objects_table.get_all(object_id, index="object_id").is_empty().run():
         print "Firmware capsule object (%s) exists." % object_id
+        if args.test: return []
         primary = objects_table.get_all(object_id, index="object_id").limit(1).pluck("id").coerce_to('array').run()[0]["id"]
         return [primary]
 
@@ -252,9 +262,15 @@ def load_uefi_capsule(firmware_id, data, guid=None, order=None, object_id= None)
     objects = volume.iterate_objects(True)
     files = get_files(objects)
 
+    if args.test: return
+
+    ### Store the volume object information
     child_ids = []
+    capsule_measured = False
     for uefi_file in files:
-        child_ids += store_file(object_id, uefi_file)
+        file_ids, file_measured = store_file(firmware_id, uefi_file)
+        child_ids += file_ids
+        volume_measured = volume_measured or file_measured
 
     entry = {
         "firmware_id": firmware_id,
@@ -262,6 +278,7 @@ def load_uefi_capsule(firmware_id, data, guid=None, order=None, object_id= None)
         "children": child_ids,
         ### Store size, type, attrs
         "type": "uefi_capsule",
+        "measured": capsule_measured,
         "size": len(data)
         ### Todo: store capsule-specific attributes
     }
@@ -271,8 +288,64 @@ def load_uefi_capsule(firmware_id, data, guid=None, order=None, object_id= None)
 
     ### Not storing capsule content (yet), may be too much data.
     #return [object_id]
+    if args.test: return []
     return get_result_keys(objects_table.insert(entry).run())
     pass
+
+def load_flash(firmware_id, data):
+    flash = FlashDescriptor(data)
+    if not flash.valid_header:
+        print "This is not a valid Flash Descriptor."
+        sys.exit(1)
+
+    flash.process()
+
+    if not args.force and not objects_table.get_all(firmware_id, index="object_id").is_empty().run():
+        print "Flash object (%s) exists." % firmware_id
+        return
+
+    child_ids = []
+    for region in flash.regions:
+        region_info = region.info(include_content= True)
+        region_id = get_firmware_id(region_info["content"])
+
+        ### Check if this region exists within this firmware_id
+        if not objects_table.get_all(firmware_id, index="firmware_id").filter({"object_id": region_id}).is_empty().run():
+            print "Skipping Region (%s) region_id (%s), object exists." % (firmware_id, region_id)
+            if args.test: continue
+            primary = objects_table.get_all(firmware_id, index="firmware_id").filter({"object_id": region_id}).\
+                limit(1).pluck("id").coerce_to('array').run()[0]["id"]
+            child_ids.append(primary)
+            continue
+
+        object_keys = []
+        #region_info["object_id"] = region_id
+        if region_info["label"] == "bios":
+            for i, volume in enumerate(region.sections):
+                print i
+                #volume_info = volume.info(include_content= True)
+                volume_keys = load_uefi_volume(firmware_id, volume._data, 
+                    order= i, generate_object_id= True)
+                if volume_keys is not None:
+                    object_keys += volume_keys  
+        else:
+            object_keys = store_object(firmware_id, region_info, object_type= "flash_region")
+
+        if object_keys is not None:
+            child_ids += object_keys
+
+        print "Stored Region (%s) region_id %s." % (firmware_id, region_id)
+
+    if args.test: return
+    objects_table.insert({
+        "firmware_id": firmware_id,
+        "object_id": firmware_id,
+        "children": child_ids,
+        "type": "flash_descriptor",
+        "size": len(data)
+    }).run()
+    pass
+
 
 def load_pfs(firmware_id, data):
     pfs = PFSFile(data)
@@ -293,6 +366,7 @@ def load_pfs(firmware_id, data):
 
         if not objects_table.get_all(firmware_id, index="firmware_id").filter({"guid": section_info["guid"]}).is_empty().run():
             print "Skipping PFS (%s) GUID %s, object exists." % (firmware_id, section_info["guid"])
+            if args.test: continue
             primary = objects_table.get_all(firmware_id, index="firmware_id").filter({"guid": section_info["guid"]}).\
                 limit(1).pluck("id").coerce_to('array').run()[0]["id"]
             child_ids.append(primary)
@@ -322,27 +396,55 @@ def load_pfs(firmware_id, data):
 
         print "Stored PFS section (%s) GUID %s." % (firmware_id, section_info["guid"])
 
+    if args.test: return
     objects_table.insert({
         "firmware_id": firmware_id,
         "object_id": firmware_id,
         "children": child_ids,
-        ### Store size, type, attrs
         "type": "dell_pfs",
         "size": len(data)
-        ### Todo: store capsule-specific attributes
     }).run()
+    pass
+
+def load_logo(firmware_id, data):
+    logo_data = data[:0x10000]
+    data = data[0x10000:]
+
+    logo_object = {"content": logo_data, "type": "hp_logo_data"}
+    object_keys = store_object(firmware_id, logo_object, object_type= "hp_logo_data")
+
+    #object_keys = []
+    volumes = search_firmware_volumes(data)
+    for i, index in enumerate(volumes):
+        volume_keys = load_uefi_volume(firmware_id, data[index-40:],
+            order= i, generate_object_id= True)
+        if volume_keys is not None:
+            print "Stored UEFI volume from index 0x%x" % (index-40) 
+            object_keys += volume_keys
+
+    print "Stored HP Logo (%s)." % (firmware_id)
+
+    if args.test: return
+    objects_table.insert({
+        "firmware_id": firmware_id,
+        "object_id": firmware_id,
+        "children": object_keys,
+        "type": "hp_logo",
+        "size": len(data) + len(logo_data)
+    }).run()
+
     pass
 
 def set_update(firmware_id, data, label_type, item_id= None):
     ### Set the label for the item
-    if item_id is not None:
+    if not args.test and item_id is not None:
         db.table("updates").get_all(item_id, index="item_id").update({
             "firmware_id": firmware_id,
             "type": label_type
         }).run()
         print "Updating update %s to firmware ID: %s (%s)." % (item_id, firmware_id, label_type)
 
-    if not db.table("updates").get_all(firmware_id, index="firmware_id").is_empty().run():
+    if not args.test and not db.table("updates").get_all(firmware_id, index="firmware_id").is_empty().run():
         ### Add size of the firmware to the updates table
         db.table("updates").get_all(firmware_id, index="firmware_id").update({
             "size": len(data)
@@ -361,7 +463,9 @@ ITEM_TYPES = {
     "pfs": "dell_pfs",
     "me": "intel_me",
     "bios": "bios_rom",
-    "volume": "uefi_volume"
+    "volume": "uefi_volume",
+    "logo": "hp_logo",
+    "fd": "flash_descriptor"
 }
 
 if __name__ == "__main__":
@@ -370,8 +474,12 @@ if __name__ == "__main__":
     parser.add_argument("--bios", action="store_true", default=False, help="This is a BIOS ROM.")
     parser.add_argument("--me", action="store_true", default=False, help="This is an Intel ME container.")
     parser.add_argument("--capsule", action= "store_true", default= False, help= "This is a UEFI firmware capsule.")
+    parser.add_argument("--logo", action="store_true", default= False, help= "This is an HP (logo) update.")
+    parser.add_argument("--flash", action="store_true", default= False, help= "This is a flash description file.")
     parser.add_argument("-i", "--item", default= None, help= "Set the update with this item_id to the firmware_id.")
     parser.add_argument("-f", "--force", default= False, action="store_true", help= "Force the update")
+    parser.add_argument("-t", "--test", default= False, action="store_true", help= "Test the loading, but do not commit.")
+    parser.add_argument("-v", "--vendor", default= None, help= "Set the vendor for this load.")
     parser.add_argument("file", help="The file to work on")
 
     args = parser.parse_args()
@@ -395,6 +503,8 @@ if __name__ == "__main__":
     elif args.bios: label_type = ITEM_TYPES["bios"]
     elif args.me: label_type = ITEM_TYPES["me"]
     elif args.capsule: label_type = ITEM_TYPES["capsule"]
+    elif args.logo: label_type = ITEM_TYPES["logo"]
+    elif args.flash: label_type = ITEM_TYPES["fd"]
     else: label_type = ITEM_TYPES["volume"]
 
     set_update(firmware_id, input_data, label_type, item_id= args.item)
@@ -403,6 +513,10 @@ if __name__ == "__main__":
         load_pfs(firmware_id, input_data)
     elif args.capsule:
         load_uefi_capsule(firmware_id, input_data)
+    elif args.logo:
+        load_logo(firmware_id, input_data)
+    elif args.flash:
+        load_flash(firmware_id, input_data)
     else:
         load_uefi_volume(firmware_id, input_data)
 

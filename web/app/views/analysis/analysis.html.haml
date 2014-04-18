@@ -15,7 +15,9 @@
               %b= guid["result"]
             %td
               .guid= guid["key"]
-            %td #{guid["guid_name"]}
+              %div
+                %small
+                  #{guid["guid_name"]}
     .col-md-6
       %h4 Top UEFI GUIDs (size)
       %table
@@ -24,7 +26,8 @@
             %td
               %b= guid["size"]
             %td
-              .guid= guid["guid"]
+              .guid
+                = guid["guid"]
 
   .row
     .col-md-6
@@ -32,13 +35,22 @@
       %table
         - @fast_updates.each do |update|
           %tr
-            %td= update["item_id"]
-            %td= update["load_change"]
+            %td
+              = update["vendor"]
+            %td
+              %a{ :href => "/explorer/firmware/#{update["firmware_id"]}"}
+                = update["item_id"]
+            %td
+              #{update["load_change"]["delta"]}s
 
     .col-md-6
       %h4 Smallest Updates
       %table
         - @small_updates.each do |update|
           %tr
-            %td= update["item_id"]
-            %td= update["load_change"]
+            %td= update["vendor"]
+            %td
+              %a{ :href => "/explorer/firmware/#{update["firmware_id"]}"}
+                = update["item_id"]
+            %td
+              #{update["load_change"]["change_score"]} bytes

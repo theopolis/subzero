@@ -48,7 +48,7 @@ class Controller(object):
             }
         )
 
-    def command_vendor_updates_count(self, db, args):
+    def command_vendor_update_count(self, db, args):
         db.table("stats").get_all("vendor_update_count", index= "type").delete().run()
         return db.table("updates").group_by("vendor", r.count).with_fields("reduction", {"group": "vendor"}).map(lambda guid:
             {
@@ -72,8 +72,8 @@ def main():
     parser_vendor_object_sum = subparsers.add_parser("vendor_object_sum", help= "Sum objects by vendor.")
     parser_vendor_content_sum = subparsers.add_parser("vendor_content_sum", help= "Sum content by vendor.")
 
-    parser_vendor_update_count = subparsers.add_parser("vendor_update_sum", help= "Count updates by vendor.")
-    parser_vendor_products_count = subparsers.add_parser("vendor_product_sum", help= "Count products by vendor.")
+    parser_vendor_update_count = subparsers.add_parser("vendor_update_count", help= "Count updates by vendor.")
+    parser_vendor_products_count = subparsers.add_parser("vendor_product_count", help= "Count products by vendor.")
 
     args = argparser.parse_args()
     controller = Controller()
@@ -89,6 +89,8 @@ def main():
         db.table("stats").insert(command_ptr(db, args).limit(99999)).run()
         end = time.time()
         print "...finished (%d) seconds." % (end-begin)
+    else:
+        print "Cannot find command: %s" % command
 
 if __name__ == '__main__':
     main()

@@ -17,16 +17,22 @@ class ExplorerController < DbController
 
   def explorer
     ### There is nothing on this page for now
+    @vendors = []
+    cursor = @stats_table.get_all("vendor_update_count", :index => "type").run
+    cursor.each {|vendor| @vendors.push({:name => vendor["key"], :count => vendor["result"]})}
+
   end
 
   def products
+    @vendor = params[:vendor]
     @page_num = if params.has_key?(:page) then params[:page].to_i-1 else 0 end
     @products = {}
     ### Iterate the updates and count the number per machine
-    updates = r.db("uefi").table("updates").
-      order_by(:index => r.desc(:date)).
-      pluck("version", "products", "date", "vendor", "item_id", 
-        "attrs", "name", "firmware_id", "size", "load_change").run
+    updates = r.db("uefi").table("updates").get_all(@vendor, :index => "vendor").
+      order_by(r.desc(:date)).
+      #pluck("version", "products", "date", "vendor", "item_id", 
+      #  "attrs", "name", "firmware_id", "size", "load_change").
+      run
     ### Do sorting here
 
     updates.each do |doc|
@@ -224,6 +230,67 @@ class ExplorerController < DbController
 
   end
 
+  def actions
+    ### Set on an object, and push to the update (use firmware_id as reference)
+    ### {actions/guid_actions => {vulnerable, trusted, network}} # all booleans (then can look backwards)
+    ### vulnerable implies this update has fixed a vulnerability, so the most-recent compartively
+    ### will be marked vulnerable (and cannot be changed)
+    @name = params[:name]
+    @value = params[:actions][:value]
+    @object_id = params[:actions][:id]
+    @firmware_id = params[:actions][:firmware_id]
+
+    success = true
+    unless @value == "locked"
+      new_value = @value == "true" ? "false" : "true"
+      if @name == "vulnerable"
+        @objects_table.get(@object_id).update({"actions" => {"vulnerable" => new_value}}).run
+        cursor = @updates_table.get_all(@firmware_id, :index=> "firmware_id").run
+        firmware_update = nil
+        cursor.each{ |update| firmware_update = update}
+        if firmware_update != nil
+          actions = firmware_update.has_key?("actions") ? firmware_update["actions"] : {"vulnerable" => []}
+          if new_value == "true" and not actions["vulnerable"].include?(@object_id)
+            actions["vulnerable"].push(@object_id)
+          elsif new_value == "false" and actions["vulnerable"].include?(@object_id)
+            actions["vulnerable"] = actions["vulnerable"] - [@object_id]
+          end
+          @updates_table.get(firmware_update["id"]).update({"actions" => actions}).run
+          puts actions
+        end
+      end
+
+      if @name == "trusted" or @name == "network"
+        object_data = @objects_table.get(@object_id).run
+        if object_data.has_key? ("guid")
+          guid = nil
+          cursor = @lookup_table.get_all(object_data["guid"], :index => "guid").run
+          cursor.each {|doc| guid = doc}
+          if guid != nil
+            actions = guid.has_key?("actions") ? guid["guid_actions"] : {}
+            actions[@name] = new_value
+            @lookup_table.get(guid["id"]).update({"guid_actions" => actions}).run
+            puts guid["id"]
+          else
+            @lookup_table.insert({"guid" => object_data["guid"], "guid_actions" => {@name => new_value}}).run
+          end
+        end
+        #cursor = @lookup_table.get_all()
+      end
+
+    end
+
+    respond_to do |format|
+      format.json { render :json => { 
+        :success => success, 
+        :value => new_value,
+
+        :type => @name,
+        :previous => @value,
+        :id => @object_id 
+      } }
+    end
+  end
 
 
 end

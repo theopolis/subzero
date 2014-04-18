@@ -1,10 +1,14 @@
 -# base = (just print the base object, no children)
 -# independent = (this is not linked to an explorer view)
 -# source = (this is a source object with unlinkable children)
+- action_classes = {"true" => "text-warning", "false" => "text-muted", "locked" => "text-danger", "vulnerable" => "text-danger"}
 %tr
   %td 
     %div
-      %i.fa.fa-unlock-alt.text-warning
+      - if obj.has_key?("measured") and obj["measured"] == true
+        %i.fa.fa-unlock-alt.text-success
+      - else
+        %i.fa.fa-unlock-alt.text-warning
       - unless obj.has_key?("guid")
         [obj] 
       - if source
@@ -59,10 +63,49 @@
         - if key == "Changed"
           %br
   %td 
-    %i.fa.fa-bug.text-muted
-    %i.fa.fa-key.text-muted
-    %i.fa.fa-fighter-jet.text-muted
+    - if obj.has_key?("actions") and obj["actions"].has_key?("vulnerable")
+      - c = action_classes.has_key?(obj["actions"]["vulnerable"]) ? action_classes[obj["actions"]["vulnerable"]] : "text-danger"
+      %i.fa.fa-bug.toggle.toggle-vulnerable{ "data-id" => obj["id"],
+        "class" => c,
+        "data-type" => "vulnerable",
+        "data-firmware" => obj["firmware_id"],
+        "data-value" => obj["actions"]["vulnerable"] }
+    - else
+      %i.fa.fa-bug.toggle.toggle-vulnerable{ "data-id" => obj["id"],
+        "class" => "text-muted",
+        "data-type" => "vulnerable",
+        "data-firmware" => obj["firmware_id"],
+        "data-value" => "false" }
+    -#= obj
+    - if obj.has_key?("guid_actions") and obj["guid_actions"].class != String and obj["guid_actions"].has_key?("trusted")
+      %i.fa.fa-key.toggle.toggle-trusted{ "data-id" => obj["id"],
+        "class" => action_classes[obj["guid_actions"]["trusted"]],
+        "data-type" => "trusted",
+        "data-firmware" => obj["firmware_id"],
+        "data-value" => obj["guid_actions"]["trusted"] }
+    - else
+      %i.fa.fa-key.toggle.toggle-trusted{ "data-id" => obj["id"],
+        "class" => "text-muted",
+        "data-type" => "trusted",
+        "data-firmware" => obj["firmware_id"],
+        "data-value" => "false" }
+
+    - if obj.has_key?("guid_actions") and obj["guid_actions"].class != String and obj["guid_actions"].has_key?("network")
+      %i.fa.fa-fighter-jet.toggle.toggle-network{ "data-id" => obj["id"],
+        "class" => action_classes[obj["guid_actions"]["network"]],
+        "data-type" => "network",
+        "data-firmware" => obj["firmware_id"],
+        "data-value" => obj["guid_actions"]["network"] }
+    - else
+      %i.fa.fa-fighter-jet.toggle.toggle-network{ "data-id" => obj["id"],
+        "class" => "text-muted",
+        "data-type" => "network",
+        "data-firmware" => obj["firmware_id"],
+        "data-value" => "false" }
+
 - if obj.has_key?("objects") and base == false
 
   - obj["objects"].each do |child|
     = render("object", :obj => child, :source => false, :independent => independent, :base => false)
+        
+      
