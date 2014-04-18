@@ -4,7 +4,7 @@ import rethinkdb as r
 class Controller(object):
     def command_guid_group(self, db, args):
         db.table("stats").get_all("uefi_guid", index= "type").delete().run()
-        return db.table("objects").group_by("guid", r.count).with_fields("reduction", {"group": "guid"}).map(lambda guid:
+        return db.table("objects").get_all("uefi_file", index= "type").group_by("guid", r.count).with_fields("reduction", {"group": "guid"}).map(lambda guid:
             {
                 "key": guid["group"]["guid"], 
                 "date": r.now().to_epoch_time(), 
