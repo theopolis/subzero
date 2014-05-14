@@ -59,22 +59,28 @@ class Controller(object):
         children1, children2 = {}, {}
         child_cursor = db.table("objects").get_all(*(list1 + list2)).\
             pluck("id", "size", "object_id", "guid", "children", "order").\
-            order_by("order").run()
+            order_by("order").order_by("size").run()
 
         has_child = False
         for i, child in enumerate(child_cursor):
             if child["id"] == "4ae16769-cef1-44ec-97d7-13d6d59fdd21":
                 has_child = True
             if "guid" not in child:
-                child["guid"] = i
+                #print i, child["size"]
+                child["guid"] = min(len(children1.keys()), len(children2.keys()))
+                #print child["guid"], child["size"]
+            #print i, child["size"], child["guid"]
             if child["id"] in list1:
-                if child["guid"] not in children1: 
+                if child["guid"] not in children1.keys(): 
                     children1[child["guid"]] = []
                 children1[child["guid"]].append(child)
             if child["id"] in list2: 
                 if child["guid"] not in children2: 
                     children2[child["guid"]] = []
                 children2[child["guid"]].append(child)
+
+        #print children1.keys()
+        #print children2.keys()
 
         objects1, objects2 = [], []
         for guid in children2.keys():

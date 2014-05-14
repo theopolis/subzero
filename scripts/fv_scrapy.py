@@ -102,7 +102,7 @@ def load_details(details, file_name= "None"):
   global CACHE_TIMES
 
   if "attrs" not in details:
-    print "Warning: not attrs in details (%s)." % file_name
+    print "Warning: no attrs in details (%s)." % file_name
   update = {"item_id": details["item_id"]}
   
   if args.type == "HP":
@@ -133,6 +133,51 @@ def load_details(details, file_name= "None"):
           "details_url": version[1]
         })
     update["vendor"] = "HP"
+
+  if args.type == "ASRock": 
+    update["products"] = [details["attrs"]["product"]]
+    update["payload_urls"] = [details["bios_url"]]
+    update["name"] = details["binary_name"]
+    update["date"] = int(datetime.strptime(details["date"], "%m/%d/%Y").strftime("%s"))
+    update["version"] = details["version"]
+    update["description"] = details["desc"]
+    update["notes_url"] = ""
+    update["details_url"] = details["attrs"]["url"]
+    update["attrs"] = {}
+    update["attrs"]["update_type"] = details["bios_type"]
+    update["attrs"]["chipset"] = details["attrs"]["chipset"]
+    update["vendor"] = "ASRock"
+
+  if args.type == "Lenovo":
+    update["products"] = details["products"]
+    update["payload_urls"] = [details["bios_url"]]
+    update["name"] = details["binary_name"]
+    try:
+      update["date"] = int(datetime.strptime(details["date"], "%Y/%m/%d").strftime("%s"))
+    except:
+      update["date"] = 0
+    update["version"] = details["version"]
+    update["description"] = details["desc"]
+    update["notes_url"] = details["notes_url"]
+    update["details_url"] = details["url"]
+    update["attrs"] = {}
+    update["attrs"]["update_type"] = "default"
+    update["vendor"] = "Lenovo"
+
+  if args.type == "MSI":
+    update["products"] = [details["attrs"]["title"]]
+    update["payload_urls"] = [details["bios_url"]]
+    update["name"] = details["binary_name"]
+    update["date"] = int(datetime.strptime(details["date"], "%Y-%m-%d").strftime("%s"))
+    update["version"] = details["version"]
+    update["description"] = details["desc"] if "desc" in details else ""
+    update["notes_url"] = ""
+    update["details_url"] = details["attrs"]["url"]
+    update["attrs"] = {}
+    update["attrs"]["importance"] = "default"
+    update["attrs"]["title"] = details["attrs"]["title"]
+    update["attrs"]["driver_type"] = details["driver_type"]
+    update["vendor"] = "MSI"
 
   if args.type == "Dell":
     update["products"] = [p.strip() for p in details["attrs"]["compatibility"]]
@@ -220,7 +265,11 @@ if __name__ == "__main__":
         print "Error: cannot load (%s). (%s)" % (file_name, str(e))
         continue
 
-      update = load_details(details, file_name)
+      try:
+        update = load_details(details, file_name)
+      except Exception, e:
+        print "Failed for %s, %s." % (file_name, str(e))
+        continue
       if not table.get_all(update["item_id"], index="item_id").is_empty().run():
         print "ItemID: %s is a duplicate, skipping." % update["item_id"]
         continue

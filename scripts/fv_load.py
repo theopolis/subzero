@@ -124,14 +124,14 @@ def store_object(firmware_id, _object, object_type= "uefi_object"):
         ### If this is an EFI object, it must be a basic object (section object)
         if isinstance(_object["_self"], uefi.FirmwareObject) and not isinstance(_object["_self"], uefi.EfiSection): 
             if not isinstance(_object["_self"], uefi.BaseObject):
-                print "Object tpye (%s), cannot be stored." % _object["_self"]
-                return None
+                print "Object type (%s), cannot be stored." % _object["_self"]
+                return []
 
     '''Store base objects only.'''
     object_id = get_firmware_id(_object["content"])
     if "objects" not in _object or len(_object["objects"]) == 0:
         entry = _object_entry(_object)
-        if len(entry["guid"]) == 0:
+        if "guid" in entry and len(entry["guid"]) == 0:
             del entry["guid"]
         entry["firmware_id"] = firmware_id
         entry["object_id"] = object_id
@@ -270,7 +270,7 @@ def load_uefi_capsule(firmware_id, data, guid=None, order=None, object_id= None)
     for uefi_file in files:
         file_ids, file_measured = store_file(firmware_id, uefi_file)
         child_ids += file_ids
-        volume_measured = volume_measured or file_measured
+        capsule_measured = capsule_measured or file_measured
 
     entry = {
         "firmware_id": firmware_id,
@@ -292,7 +292,7 @@ def load_uefi_capsule(firmware_id, data, guid=None, order=None, object_id= None)
     return get_result_keys(objects_table.insert(entry).run())
     pass
 
-def load_flash(firmware_id, data):
+def load_flash(firmware_id, data, save= True):
     flash = FlashDescriptor(data)
     if not flash.valid_header:
         print "This is not a valid Flash Descriptor."
@@ -302,7 +302,7 @@ def load_flash(firmware_id, data):
 
     if not args.force and not objects_table.get_all(firmware_id, index="object_id").is_empty().run():
         print "Flash object (%s) exists." % firmware_id
-        return
+        return None
 
     child_ids = []
     for region in flash.regions:
@@ -336,15 +336,20 @@ def load_flash(firmware_id, data):
 
         print "Stored Region (%s) region_id %s." % (firmware_id, region_id)
 
-    if args.test: return
-    objects_table.insert({
+    if not save:
+        ### This is a child flash descriptor, do not save an object entry.
+        return child_ids
+
+    entry = {
         "firmware_id": firmware_id,
         "object_id": firmware_id,
         "children": child_ids,
         "type": "flash_descriptor",
-        "size": len(data)
-    }).run()
-    pass
+        "size": len(data)   
+    }
+
+    if args.test: return []
+    return get_result_keys(objects_table.insert(entry).run())
 
 
 def load_pfs(firmware_id, data):
@@ -432,8 +437,56 @@ def load_logo(firmware_id, data):
         "type": "hp_logo",
         "size": len(data) + len(logo_data)
     }).run()
-
     pass
+
+def load_asrock(firmware_id, data):
+    ### Todo: consolidate with load_flash
+    asrock_data = data[:0x1000]
+    data = data[0x1000:]
+
+    child_ids = load_flash(firmware_id, data, save= False)
+    if child_ids is None:
+        return
+
+    asrock_object = {"content": asrock_data, "type": "asrock_header"}
+    header_id = store_object(firmware_id, asrock_object, object_type= "asrock_header")
+
+    entry = {
+        "firmware_id": firmware_id,
+        "object_id": firmware_id,
+        "children": header_id + child_ids,
+        "type": "flash_descriptor",
+        "size": len(data) + 0x1000
+    }
+
+    if args.test: return []
+    return get_result_keys(objects_table.insert(entry).run())
+    pass
+
+def load_lvfv(firmware_id, data):
+    ### Todo: store initial chunk of update (may be all 0xFF padding)
+    
+    children = []
+    objects = uefi.find_volumes(data, process= False)
+
+    for i, firmware_object in enumerate(objects):
+        if type(firmware_object) == uefi.FirmwareVolume:
+            children += load_uefi_volume(firmware_id, firmware_object._data, order= i, generate_object_id= True)
+        else:
+            ### Todo: store the padding in Lenovo updates (this includes content)
+            pass
+
+    entry = {
+        "firmware_id": firmware_id,
+        "object_id": firmware_id,
+        "children": children,
+        "type": "lenovo_update",
+        "size": len(data)
+    }
+
+    if args.test: return []
+    return get_result_keys(objects_table.insert(entry).run())
+
 
 def set_update(firmware_id, data, label_type, item_id= None):
     ### Set the label for the item
@@ -465,7 +518,8 @@ ITEM_TYPES = {
     "bios": "bios_rom",
     "volume": "uefi_volume",
     "logo": "hp_logo",
-    "fd": "flash_descriptor"
+    "fd": "flash_descriptor",
+    "lvfv": "lenovo_update"
 }
 
 if __name__ == "__main__":
@@ -476,6 +530,8 @@ if __name__ == "__main__":
     parser.add_argument("--capsule", action= "store_true", default= False, help= "This is a UEFI firmware capsule.")
     parser.add_argument("--logo", action="store_true", default= False, help= "This is an HP (logo) update.")
     parser.add_argument("--flash", action="store_true", default= False, help= "This is a flash description file.")
+    parser.add_argument("--asrock", action="store_true", default= False, help= "This is an ASRock update.")
+    parser.add_argument("--lvfv", action="store_true", default= False, help="This is a Lenovo update (controller and flash).")
     parser.add_argument("-i", "--item", default= None, help= "Set the update with this item_id to the firmware_id.")
     parser.add_argument("-f", "--force", default= False, action="store_true", help= "Force the update")
     parser.add_argument("-t", "--test", default= False, action="store_true", help= "Test the loading, but do not commit.")
@@ -505,6 +561,8 @@ if __name__ == "__main__":
     elif args.capsule: label_type = ITEM_TYPES["capsule"]
     elif args.logo: label_type = ITEM_TYPES["logo"]
     elif args.flash: label_type = ITEM_TYPES["fd"]
+    elif args.asrock: label_type = ITEM_TYPES["fd"]
+    elif args.lvfv: label_type = ITEM_TYPES["lvfv"]
     else: label_type = ITEM_TYPES["volume"]
 
     set_update(firmware_id, input_data, label_type, item_id= args.item)
@@ -517,6 +575,10 @@ if __name__ == "__main__":
         load_logo(firmware_id, input_data)
     elif args.flash:
         load_flash(firmware_id, input_data)
+    elif args.asrock:
+        load_asrock(firmware_id, input_data)
+    elif args.lvfv:
+        load_lvfv(firmware_id, input_data)
     else:
         load_uefi_volume(firmware_id, input_data)
 
