@@ -40,10 +40,11 @@
         - if source == true or independent == true
           (#{obj["type"]})
   %td
-    - if obj["attrs"].has_key?("name")
-      .none= obj["attrs"]["name"]
-    - if obj["attrs"].has_key?("description")
-      .none= obj["attrs"]["description"]
+    - if obj.has_key?("attrs")
+      - if obj["attrs"].has_key?("name")
+        .none= obj["attrs"]["name"]
+      - if obj["attrs"].has_key?("description")
+        .none= obj["attrs"]["description"]
     - if obj.has_key?("info")
       - obj["info"].each do |key, value|
         %b= key
