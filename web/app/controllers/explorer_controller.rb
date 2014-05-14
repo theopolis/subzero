@@ -158,7 +158,7 @@ class ExplorerController < DbController
       depth_index += 1
       cursor = @objects_table.get_all(*child_ids).
         #### TESTING
-        limit(20).
+        #limit(20).
         #### END TESTING
         map{|doc| r.branch(doc.has_fields([:guid]), doc.merge({
           ### Add in map-reduces

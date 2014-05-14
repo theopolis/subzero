@@ -18,7 +18,7 @@ class AnalysisController < DbController
   end
 
   def analysis
-    select_limit = 5
+    select_limit = 10
     ### Most uses GUIDS
     @guids = []
     cursor = @stats_table.get_all("uefi_guid", :index => "type").order_by(r.desc(:result)).limit(select_limit).
@@ -38,17 +38,42 @@ class AnalysisController < DbController
         })}.run
     cursor.each {|guid| @guids_size.push(flatten_lookup(guid))}
 
-    ### Fastest updates, calculate the change in updates
+    ### Fastest updates, calculate the change in updates (per-vendor)
+    cursor = @stats_table.get_all("vendor_update_count", :index => "type").
+      map{|doc|
+        doc.merge({
+          "deltas" => @updates_table.get_all(doc[:key], :index => "vendor").
+            filter{|sdoc| sdoc[:load_change][:delta] > 0}.
+            order_by(lambda {|sdoc| sdoc[:load_change][:delta]}).limit(select_limit).coerce_to("array")
+          })
+      }.run
+    #cursor.each {|vendor| @vendors.push({:name => vendor["key"], :count => vendor["result"]})}
     @fast_updates = []
-    cursor = @updates_table.filter{|doc| doc[:load_change][:delta] > 0}.
-      order_by(lambda {|doc| doc[:load_change][:delta]}).limit(select_limit).run
-    cursor.each {|update| @fast_updates.push(update)}
+    #cursor = @updates_table.filter{|doc| doc[:load_change][:delta] > 0}.
+    #  order_by(lambda {|doc| doc[:load_change][:delta]}).limit(select_limit).run
+    #cursor.each do |update| 
+    #  if not @fast_updates.has_key?(update["key"]) then @fast_updates[update["key"]] = [] end
+    #  update["deltas"].each {|delta| @fast_updates[update["key"]].push(delta)}
+    #end
+    #  @fast_updates.push(update)}
+    cursor.each {|update| update["deltas"].each {|delta| @fast_updates.push(delta)}}
+    @fast_updates.sort_by! {|update| update["load_change"]["delta"]}
 
     ### Smallest updates, order by asc load_change->change
+    cursor = @stats_table.get_all("vendor_update_count", :index => "type").
+      map{|doc|
+        doc.merge({
+          "changes" => @updates_table.get_all(doc[:key], :index => "vendor").
+            filter{|sdoc| sdoc[:load_change][:change_score] > 0}.
+            order_by(lambda {|sdoc| sdoc[:load_change][:change_score]}).limit(select_limit).coerce_to("array")
+          })
+      }.run
     @small_updates = []
-    cursor = @updates_table.filter{|doc| doc[:load_change][:change_score] > 0}.
-      order_by(lambda {|doc| doc[:load_change][:change_score]}).limit(select_limit).run
-    cursor.each {|update| @small_updates.push(update)}
+    #cursor = @updates_table.filter{|doc| doc[:load_change][:change_score] > 0}.
+    #  order_by(lambda {|doc| doc[:load_change][:change_score]}).limit(select_limit).run
+    #cursor.each {|update| @small_updates.push(update)}
+    cursor.each {|update| update["changes"].each {|change| @small_updates.push(change)}}
+    @small_updates.sort_by! {|update| update["load_change"]["changes"]}
 
     ### Most common DXE
     @dxes = []
