@@ -58,13 +58,15 @@ class ExplorerController < DbController
   def download
     @object_id = params[:object_id]
 
-    object = r.db("uefi").table("objects").get(@object_id).run
+    object = nil
+    cursor = r.db("uefi").table("content").get_all(@object_id, :index => "object_id").limit(1).run
+    cursor.each {|obj| object = obj }
     if object == nil
       return
     end
 
     send_data Base64.decode64(object["content"]), 
-      :filename => "%s-%s.obj" % [object["firmware_id"], object["guid"]]
+      :filename => "%s-%s.obj" % [object["firmware_id"], object["guid"]], :disposition => 'attachment'
   end
 
   def raw

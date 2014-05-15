@@ -103,6 +103,8 @@
         "data-type" => "network",
         "data-firmware" => obj["firmware_id"],
         "data-value" => "false" }
+    %a{ :href => "/explorer/download/#{obj["object_id"]}"}
+      %i.fa.fa-download{ :class => "text-muted" }
 
 - if obj.has_key?("objects") and base == false
 

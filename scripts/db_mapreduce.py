@@ -48,6 +48,28 @@ class Controller(object):
             }
         )
 
+    def command_vendor_object_count(self, db, args):
+        db.table("stats").get_all("vendor_object_count", index= "type").delete().run()
+        return db.table("objects").group_by("vendor", r.count).with_fields("reduction", {"group": "vendor"}).map(lambda guid:
+            {
+                "key": guid["group"]["vendor"], 
+                "date": r.now().to_epoch_time(), 
+                "type": "vendor_object_count", 
+                "result": guid["reduction"]
+            }
+        )
+
+    def command_vendor_content_count(self, db, args):
+        db.table("stats").get_all("vendor_content_count", index= "type").delete().run()
+        return db.table("content").group_by("vendor", r.count).with_fields("reduction", {"group": "vendor"}).map(lambda guid:
+            {
+                "key": guid["group"]["vendor"], 
+                "date": r.now().to_epoch_time(), 
+                "type": "vendor_content_count", 
+                "result": guid["reduction"]
+            }
+        )
+
     def command_vendor_update_count(self, db, args):
         db.table("stats").get_all("vendor_update_count", index= "type").delete().run()
         return db.table("updates").group_by("vendor", r.count).with_fields("reduction", {"group": "vendor"}).map(lambda guid:
@@ -71,6 +93,9 @@ def main():
     
     parser_vendor_object_sum = subparsers.add_parser("vendor_object_sum", help= "Sum objects by vendor.")
     parser_vendor_content_sum = subparsers.add_parser("vendor_content_sum", help= "Sum content by vendor.")
+
+    parser_vendor_object_count = subparsers.add_parser("vendor_object_count", help= "Count objects by vendor.")
+    parser_vendor_content_count = subparsers.add_parser("vendor_content_count", help= "Count content by vendor.")
 
     parser_vendor_update_count = subparsers.add_parser("vendor_update_count", help= "Count updates by vendor.")
     parser_vendor_products_count = subparsers.add_parser("vendor_product_count", help= "Count products by vendor.")
